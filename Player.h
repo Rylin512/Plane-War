@@ -1,14 +1,14 @@
 #pragma once
 #include <windows.h>
+#include <gdiplus.h>
 #include "Config.h"
 #include "GameObject.h"
 
-// 前向声明
 class Game;
 
 // ============================================================
 // 文件：Player.h
-// 功能：玩家飞机类 — 移动、射击、生命值、道具状态
+// 功能：玩家飞机 — 变速移动 (Shift/Ctrl) + GDI+ 渲染
 // ============================================================
 
 class Player : public GameObject {
@@ -16,39 +16,39 @@ public:
     Player();
 
     void update() override;
+    void render(Gdiplus::Graphics& g) const override;
 
-    // 移动
     void move(float dx, float dy);
     void clampToScreen();
 
-    // 射击
     bool canShoot() const;
     void resetShootCooldown();
 
-    // 受击
     void takeDamage();
     bool isInvincible() const;
 
-    // 道具状态
     void addLife();
     void addBomb();
     void activateShield();
     void increaseFirepower();
+    void boostFireRate();
 
-    // 渲染
-    void render(HDC hdc) const;
+    // ── 变速方法 ──
+    void setFastMode(bool on);    // Shift
+    void setSlowMode(bool on);    // Ctrl
+    float getCurrentSpeed() const;
 
-    // ---- 状态 ----
-    int lives;
-    int firepowerLevel;
-    int firepowerTimer;     // 火力增强剩余帧数
-    int invincibleTimer;
-    int shootCooldown;
+    // ── 状态 ──
+    int lives, firepowerLevel, firepowerTimer;
+    int invincibleTimer, shootCooldown;
     int bombCount;
-    bool shieldActive;
-    int shieldTimer;
+    bool shieldActive; int shieldTimer;
+    bool fireRateBoost; int fireRateTimer;
     int blinkCounter;
-
-    // 移动速度
     float speedX, speedY;
+
+    // 变速状态
+    bool fastMode, slowMode;
+    float currentSpeedMult;
+    void updateSpeedMult();
 };

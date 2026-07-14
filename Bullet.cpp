@@ -1,85 +1,36 @@
 #include "Bullet.h"
+using namespace Gdiplus;
 
-// ============================================================
-// 文件：Bullet.cpp
-// 功能：子弹类实现
-// ============================================================
+Bullet::Bullet(float x, float y, int w, int h, BulletOwner _o, float _sy)
+    : GameObject(x,y,w,h), owner(_o), speedY(_sy), damage(1) {}
 
-Bullet::Bullet(float x, float y, int w, int h, BulletOwner _owner, float _speedY)
-    : GameObject(x, y, w, h)
-    , owner(_owner), speedY(_speedY), damage(1)
-{
-}
+void Bullet::update() { y += speedY; }
 
-void Bullet::update() {
-    y += speedY;
-}
-
-void Bullet::render(HDC hdc) const {
-    HBRUSH brush;
-    HPEN pen;
-
+void Bullet::render(Graphics& g) const {
+    float sc = GAME_SCALE, cx = centerX(), cy = centerY();
     if (owner == BulletOwner::PLAYER) {
-        // 玩家子弹 — 亮黄色
-        brush = CreateSolidBrush(RGB(255, 255, 50));
-        pen = CreatePen(PS_SOLID, 1, RGB(255, 255, 100));
+        // 激光弹 — 细长发光
+        SolidBrush gb(Color(255,255,255,100)); g.FillEllipse(&gb, x-2*sc, y-2*sc, (width+4)*sc, (height+4)*sc);
+        SolidBrush bb(Color(255,255,255,200)); g.FillEllipse(&bb, x, y, width*sc, height*sc);
+        SolidBrush cb(Color(255,255,255,255)); g.FillRectangle(&cb, cx-1*sc, y, 2*sc, height*sc);
     } else {
-        // 敌机子弹 — 红色圆形
-        brush = CreateSolidBrush(RGB(255, 60, 60));
-        pen = CreatePen(PS_SOLID, 1, RGB(255, 100, 100));
+        // 火球弹 — 炽热圆形
+        SolidBrush gb(Color(255,255,80,30)); g.FillEllipse(&gb, x-2*sc, y-2*sc, (width+4)*sc, (height+4)*sc);
+        SolidBrush eb(Palette::BulletEnemy); g.FillEllipse(&eb, x, y, width*sc, height*sc);
+        SolidBrush cb(Color(255,255,200,150)); g.FillEllipse(&cb, cx-1.5f*sc, cy-1.5f*sc, 3*sc, 3*sc);
     }
-
-    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
-    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, brush);
-
-    if (owner == BulletOwner::PLAYER) {
-        // 玩家子弹：细长椭圆形
-        Ellipse(hdc, (int)x, (int)y, (int)(x + width), (int)(y + height));
-    } else {
-        // 敌机子弹：圆形
-        Ellipse(hdc, (int)x, (int)y, (int)(x + width), (int)(y + height));
-    }
-
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(brush);
-    DeleteObject(pen);
 }
-
-// ======== PlayerBullet ========
 
 PlayerBullet::PlayerBullet(float x, float y)
-    : Bullet(x, y, BULLET_PLAYER_WIDTH, BULLET_PLAYER_HEIGHT,
-             BulletOwner::PLAYER, -BULLET_PLAYER_SPEED)
-{
-    damage = 1;
-}
+    : Bullet(x,y,BULLET_PLAYER_WIDTH,BULLET_PLAYER_HEIGHT,BulletOwner::PLAYER,-BULLET_PLAYER_SPEED*GAME_SCALE) {}
 
-// ======== EnemyBullet ========
+EnemyBullet::EnemyBullet(float x, float y, float ax)
+    : Bullet(x,y,BULLET_ENEMY_WIDTH,BULLET_ENEMY_HEIGHT,BulletOwner::ENEMY,BULLET_ENEMY_SPEED*GAME_SCALE), speedX(ax*GAME_SCALE) {}
 
-EnemyBullet::EnemyBullet(float x, float y, float angleX)
-    : Bullet(x, y, BULLET_ENEMY_WIDTH, BULLET_ENEMY_HEIGHT,
-             BulletOwner::ENEMY, BULLET_ENEMY_SPEED)
-    , speedX(angleX)
-{
-    damage = 1;
-}
-
-void EnemyBullet::update() {
-    x += speedX;
-    y += speedY;
-}
-
-void EnemyBullet::render(HDC hdc) const {
-    HBRUSH brush = CreateSolidBrush(RGB(255, 60, 60));
-    HPEN pen = CreatePen(PS_SOLID, 1, RGB(255, 100, 100));
-    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
-    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, brush);
-
-    Ellipse(hdc, (int)x, (int)y, (int)(x + width), (int)(y + height));
-
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(brush);
-    DeleteObject(pen);
+void EnemyBullet::update() { x+=speedX; y+=speedY; }
+void EnemyBullet::render(Graphics& g) const {
+    float sc = GAME_SCALE, cx=centerX(), cy=centerY();
+    SolidBrush gb(Color(255,255,80,30)); g.FillEllipse(&gb, x-2*sc, y-2*sc, (width+4)*sc, (height+4)*sc);
+    SolidBrush eb(Palette::BulletEnemy); g.FillEllipse(&eb, x, y, width*sc, height*sc);
+    SolidBrush cb(Palette::BulletEnemyCore); g.FillEllipse(&cb, cx-1.5f*sc, cy-1.5f*sc, 3*sc, 3*sc);
 }

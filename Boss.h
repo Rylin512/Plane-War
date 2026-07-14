@@ -1,48 +1,34 @@
 #pragma once
 #include <windows.h>
+#include <gdiplus.h>
 #include "Enemy.h"
 
 class Game;
 
+enum class BossPhase { ENTRY, PHASE_1, PHASE_2, PHASE_3, DEFEATED };
+
 // ============================================================
 // 文件：Boss.h
-// 功能：Boss 敌机 — 血条、多阶段攻击模式
+// 功能：Boss — 多阶段 AI + GDI+ 渲染 + HP 条
 // ============================================================
-
-// Boss 攻击阶段
-enum class BossPhase {
-    ENTRY,      // 入场动画
-    PHASE_1,    // HP 100%-66%: 缓慢移动 + 瞄准射击
-    PHASE_2,    // HP 66%-33%: 加速移动 + 扇形弹幕
-    PHASE_3,    // HP 33%-0%:  激进 + 环形弹幕
-    DEFEATED    // 被击毁
-};
 
 class Boss : public Enemy {
 public:
     Boss(float startX, int level);
 
     void update() override;
-    void render(HDC hdc) const override;
+    void render(Gdiplus::Graphics& g) const override;
 
-    // Boss 特有方法
     BossPhase getCurrentPhase() const;
     void updatePhase();
     void firePattern(Game* game);
-
-    // 渲染血条
-    void renderHPBar(HDC hdc) const;
+    void renderHPBar(Gdiplus::Graphics& g) const;
 
 private:
     BossPhase phase;
-    int phaseTimer;         // 当前阶段计时器
-    int patternTimer;       // 弹幕模式计时器
-    int patternIndex;       // 当前弹幕模式索引
-    float targetX;          // 移动目标X
-    int entryTimer;         // 入场计时
-    bool entered;           // 是否已完成入场
-
-    // Boss 外观动画
+    int phaseTimer, patternTimer, patternIndex;
+    float targetX;
+    int entryTimer;
+    bool entered;
     int animTimer;
-    int wingAngle;          // 翅膀动画角度
 };
