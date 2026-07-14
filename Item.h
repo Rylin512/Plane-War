@@ -16,7 +16,7 @@ public:
     Item(float x, float y, ItemType type);
     virtual ~Item() {}
     virtual void update() override;
-    virtual void render(Gdiplus::Graphics& g) const override;
+    virtual void render(Renderer& r) const override;
 
     ItemType itemType;
     float fallSpeed;

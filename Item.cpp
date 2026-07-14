@@ -1,4 +1,5 @@
 #include "Item.h"
+#include "Renderer.h"
 using namespace Gdiplus;
 
 Item::Item(float x, float y, ItemType _type)
@@ -6,7 +7,7 @@ Item::Item(float x, float y, ItemType _type)
 
 void Item::update() { y += fallSpeed; }
 
-void Item::render(Graphics& g) const {
+void Item::render(Renderer& r) const {
     float sc = GAME_SCALE, cx=centerX(), cy=centerY(), sz = ITEM_SIZE*sc;
     Color fill, glow, border; const wchar_t* lbl=L"?";
     switch (itemType) {
@@ -18,14 +19,12 @@ void Item::render(Graphics& g) const {
     default: fill=Color(255,150,150,150); glow=Color(255,200,200,200); border=Color(255,100,100,100); break;
     }
     // 光晕
-    Pen gp(glow,2*sc); g.DrawEllipse(&gp,cx-13*sc,cy-13*sc,26*sc,26*sc);
+    r.drawEllipse(cx-13*sc, cy-13*sc, 26*sc, 26*sc, glow, 2*sc);
     // 主体
-    SolidBrush fb(fill); g.FillRectangle(&fb,x,y,sz,sz);
-    Pen bp(border,2*sc); g.DrawRectangle(&bp,x,y,sz,sz);
+    r.fillRect(x, y, sz, sz, fill);
+    r.drawRect(x, y, sz, sz, border, 2*sc);
     // 高光
-    Pen hp(Color(255,255,255,255),1*sc); g.DrawLine(&hp,x+3*sc,y+3*sc,x+sz-3*sc,y+3*sc);
+    r.drawLine(x+3*sc, y+3*sc, x+sz-3*sc, y+3*sc, Color(255,255,255,255), 1*sc);
     // 标签
-    FontFamily ff(L"Arial"); Font fnt(&ff,12*sc,FontStyleBold,UnitPixel);
-    SolidBrush wh(Color::White); StringFormat sf; sf.SetAlignment(StringAlignmentCenter); sf.SetLineAlignment(StringAlignmentCenter);
-    g.DrawString(lbl,-1,&fnt,RectF(x,y,sz,sz),&sf,&wh);
+    r.drawTextCentered(lbl, x, y, sz, sz, L"Arial", 12*sc, FontStyleBold, Color::White);
 }

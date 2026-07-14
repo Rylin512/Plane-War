@@ -66,85 +66,78 @@ void Player::boostFireRate()         { fireRateBoost = true; fireRateTimer = FIR
 //  GDI+ 渲染 — 像素风科幻战机
 // ========================================================================
 
-void Player::render(Graphics& g) const {
+void Player::render(Renderer& r) const {
     if (isInvincible() && (blinkCounter/6)%2 == 0) return;
 
     float sc = GAME_SCALE;
     float cx = centerX(), cy = centerY();
-    float w = width, h = height;
+    float h = height;
 
     // ── 速度光晕 ──
     {
-        Color glowC = fastMode ? Color(255,0,255,80) : slowMode ? Color(255,80,180,255) : Color(255,0,100,200);
+        Color glowC = fastMode ? Palette::PlayerFastGlow : slowMode ? Palette::PlayerSlowGlow : Palette::PlayerGlow;
         for (int i=2;i>=0;i--) {
-            Pen gp(glowC, 1.0f+i*1.2f*sc);
-            float r = (22+i*5)*sc;
-            g.DrawEllipse(&gp, cx-r, cy-r, r*2, r*2);
+            float radius = (22+i*5)*sc;
+            r.drawEllipse(cx-radius, cy-radius, radius*2, radius*2, glowC, 1.0f+i*1.2f*sc);
         }
     }
 
     // ── 护盾 ──
     if (shieldActive) {
+        Color shC = Palette::PlayerGlow;
         for (int i=3;i>=0;i--) {
-            Pen p(Color((BYTE)(200-i*40), 0, 180, 255), 2.0f+i*2.0f*sc);
-            float r = (30+i*5)*sc;
-            g.DrawEllipse(&p, cx-r, cy-r, r*2, r*2);
+            float radius = (30+i*5)*sc;
+            r.drawEllipse(cx-radius, cy-radius, radius*2, radius*2, Color((BYTE)(200-i*40), shC.GetR(), shC.GetG(), shC.GetB()), 2.0f+i*2.0f*sc);
         }
     }
 
     // ── 引擎火焰 ──
     int flick = 4 + blinkCounter%6;
-    // 外焰
+    Color eng = Palette::PlayerEngine;
     {
-        Pen f1(Color(255, 255, 80+rand()%50, 10), 3*sc);
-        g.DrawLine(&f1, cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+(9+flick)*sc);
-        g.DrawLine(&f1, cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+(9+flick)*sc);
-        // 中焰
-        Pen f2(Color(255, 255, 200, 30), 2*sc);
+        Color f1c(eng.GetA(), eng.GetR(), (BYTE)(eng.GetG()*80/255+rand()%50), eng.GetB()/2);
+        r.drawLine(cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+(9+flick)*sc, f1c, 3*sc);
+        r.drawLine(cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+(9+flick)*sc, f1c, 3*sc);
         int fh = 5 + blinkCounter%4;
-        g.DrawLine(&f2, cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+fh*sc);
-        g.DrawLine(&f2, cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+fh*sc);
-        // 焰心
-        Pen f3(Color(240, 255, 255, 200), 1*sc);
+        Color f2c(eng.GetA()/2, eng.GetR(), eng.GetG(), eng.GetB());
+        r.drawLine(cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+fh*sc, f2c, 2*sc);
+        r.drawLine(cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+fh*sc, f2c, 2*sc);
         int f3h = 2 + blinkCounter%3;
-        g.DrawLine(&f3, cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+f3h*sc);
-        g.DrawLine(&f3, cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+f3h*sc);
+        Color f3c(240, 255, 255, 200);
+        r.drawLine(cx-5*sc, cy+h/2, cx-5*sc, cy+h/2+f3h*sc, f3c, 1*sc);
+        r.drawLine(cx+5*sc, cy+h/2, cx+5*sc, cy+h/2+f3h*sc, f3c, 1*sc);
     }
 
-    // ── 机身主体（多层多边形） ──
-    // 阴影/暗面
+    // ── 机身主体 ──
+    Color pBody = Palette::PlayerBody, pDark = Palette::PlayerDark, pWing = Palette::PlayerWing;
     PointF shadow[6] = {{cx+2*sc,cy-h/2+2*sc},{cx-6*sc,cy+h/2-6*sc},{cx-2*sc,cy+h/2+2*sc},{cx+6*sc,cy+h/2+2*sc},{cx+10*sc,cy+h/2-6*sc},{cx+2*sc,cy-h/2+2*sc}};
-    SolidBrush sdBr(Color(255,0,60,140)); g.FillPolygon(&sdBr, shadow, 6);
+    r.fillPolygon(shadow, 6, pDark);
 
-    // 主体亮色
     PointF body[6] = {{cx,cy-h/2},{cx-8*sc,cy+h/2-8*sc},{cx-4*sc,cy+h/2},{cx+4*sc,cy+h/2},{cx+8*sc,cy+h/2-8*sc}};
-    SolidBrush bdBr(Color(255,0,180,255)); g.FillPolygon(&bdBr, body, 5);
-    Pen bdPn(Color(255,0,100,200), 1.5f*sc); g.DrawPolygon(&bdPn, body, 5);
+    r.fillPolygon(body, 5, pBody);
+    r.drawPolygon(body, 5, pDark, 1.5f*sc);
 
-    // 机身高光条纹
-    Pen hlPn(Color(255,100,230,255), 1*sc);
-    g.DrawLine(&hlPn, cx-2*sc, cy-h/2+6*sc, cx-1*sc, cy+h/2-6*sc);
-    g.DrawLine(&hlPn, cx+2*sc, cy-h/2+6*sc, cx+1*sc, cy+h/2-6*sc);
+    // 高光条纹
+    r.drawLine(cx-2*sc, cy-h/2+6*sc, cx-1*sc, cy+h/2-6*sc, pWing, 1*sc);
+    r.drawLine(cx+2*sc, cy-h/2+6*sc, cx+1*sc, cy+h/2-6*sc, pWing, 1*sc);
 
     // ── 主翼 ──
     PointF lwing[4] = {{cx-20*sc,cy-2*sc},{cx-8*sc,cy-2*sc},{cx-8*sc,cy-8*sc},{cx-22*sc,cy-8*sc}};
     PointF rwing[4] = {{cx+20*sc,cy-2*sc},{cx+8*sc,cy-2*sc},{cx+8*sc,cy-8*sc},{cx+22*sc,cy-8*sc}};
-    SolidBrush wBr(Color(255,150,190,220));
-    g.FillPolygon(&wBr, lwing, 4); g.FillPolygon(&wBr, rwing, 4);
-    Pen wPn(Color(255,100,150,190), 1.5f*sc);
-    g.DrawPolygon(&wPn, lwing, 4); g.DrawPolygon(&wPn, rwing, 4);
+    r.fillPolygon(lwing, 4, pWing);
+    r.fillPolygon(rwing, 4, pWing);
+    r.drawPolygon(lwing, 4, pDark, 1.5f*sc);
+    r.drawPolygon(rwing, 4, pDark, 1.5f*sc);
     // 翼尖导弹
-    Pen msPn(Color(255,255,220,80), 1.5f*sc);
-    g.DrawLine(&msPn, cx-21*sc, cy-5*sc, cx-21*sc, cy-12*sc);
-    g.DrawLine(&msPn, cx+21*sc, cy-5*sc, cx+21*sc, cy-12*sc);
+    r.drawLine(cx-21*sc, cy-5*sc, cx-21*sc, cy-12*sc, pWing, 1.5f*sc);
+    r.drawLine(cx+21*sc, cy-5*sc, cx+21*sc, cy-12*sc, pWing, 1.5f*sc);
 
     // ── 尾翼 ──
-    Pen tlPn(Color(255,140,180,210), 2.5f*sc);
-    g.DrawLine(&tlPn, cx-14*sc, cy+h/2-4*sc, cx+14*sc, cy+h/2-4*sc);
+    r.drawLine(cx-14*sc, cy+h/2-4*sc, cx+14*sc, cy+h/2-4*sc, pWing, 2.5f*sc);
 
     // ── 驾驶舱 ──
-    SolidBrush cpBg(Color(255,0,60,150)); g.FillEllipse(&cpBg, cx-7*sc, cy-9*sc, 14*sc, 12*sc);
-    SolidBrush cpBr(Color(255,0,230,255)); g.FillEllipse(&cpBr, cx-5*sc, cy-8*sc, 10*sc, 9*sc);
-    // 舱内高光
-    SolidBrush cpHi(Color(150,255,255,255)); g.FillEllipse(&cpHi, cx-3*sc, cy-8*sc, 4*sc, 3*sc);
+    Color pCockpit = Palette::PlayerCockpit;
+    r.fillEllipse(cx-7*sc, cy-9*sc, 14*sc, 12*sc, Color(pCockpit.GetA(), pCockpit.GetR()/4, pCockpit.GetG()/4, pCockpit.GetB()/2));
+    r.fillEllipse(cx-5*sc, cy-8*sc, 10*sc, 9*sc, pCockpit);
+    r.fillEllipse(cx-3*sc, cy-8*sc, 4*sc, 3*sc, Color(150, 255, 255, 255));
 }
