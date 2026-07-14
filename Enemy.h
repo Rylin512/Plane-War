@@ -20,7 +20,7 @@ public:
     virtual ~Enemy() {}
 
     virtual void update() override;
-    virtual void render(Gdiplus::Graphics& g) const override;
+    virtual void render(Renderer& r) const override;
 
     virtual bool shouldShoot(int frameCount);
     virtual void resetShootTimer();

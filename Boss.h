@@ -17,12 +17,12 @@ public:
     Boss(float startX, int level);
 
     void update() override;
-    void render(Gdiplus::Graphics& g) const override;
+    void render(Renderer& r) const override;
 
     BossPhase getCurrentPhase() const;
     void updatePhase();
     void firePattern(Game* game);
-    void renderHPBar(Gdiplus::Graphics& g) const;
+    void renderHPBar(Renderer& r) const;
 
 private:
     BossPhase phase;

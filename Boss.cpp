@@ -7,11 +7,12 @@
 using namespace Gdiplus;
 
 Boss::Boss(float startX, int level)
-    : Enemy(startX, -(float)BOSS_HEIGHT, BOSS_WIDTH, BOSS_HEIGHT, EnemyType::BOSS)
+    : Enemy(startX, -(float)BOSS_HEIGHT * GAME_SCALE,
+            (int)(BOSS_WIDTH * GAME_SCALE), (int)(BOSS_HEIGHT * GAME_SCALE), EnemyType::BOSS)
     , phase(BossPhase::ENTRY), phaseTimer(0), patternTimer(0), patternIndex(0)
     , targetX(WINDOW_WIDTH/2.0f), entryTimer(60), entered(false), animTimer(0)
 {
-    speed = BOSS_SPEED;
+    speed = BOSS_SPEED * GAME_SCALE;
     hp = BOSS_BASE_HP + level*10; maxHp = hp;
     scoreValue = BOSS_SCORE + level*1000;
     type = EnemyType::BOSS;
@@ -54,28 +55,29 @@ void Boss::firePattern(Game* game) {
             float dx=px-cx, dy=py-cy, len=sqrtf(dx*dx+dy*dy);
             if (len>0) {
                 float ba=dx/len;
-                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,ba*0.5f));
-                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-8,cy,(ba-0.15f)*0.5f));
-                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+8,cy,(ba+0.15f)*0.5f));
+                game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,ba*0.5f));
+                game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-8,cy,(ba-0.15f)*0.5f));
+                game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+8,cy,(ba+0.15f)*0.5f));
             }
         } break;
     case BossPhase::PHASE_2:
         patternTimer=45;
-        for (int i=-2;i<=2;i++) game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*10.0f,cy,i*0.2f*0.5f));
-        if (rand()%3==0) { float dx=game->player->centerX()-cx; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,(dx/sqrtf(dx*dx+1))*0.5f)); }
+        for (int i=-2;i<=2;i++) game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*10.0f,cy,i*0.2f*0.5f));
+        if (rand()%3==0) { float dx=game->player->centerX()-cx; game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,(dx/sqrtf(dx*dx+1))*0.5f)); }
         break;
     case BossPhase::PHASE_3:
         patternTimer=35; patternIndex=(patternIndex+1)%3;
         switch (patternIndex) {
-        case 0: for (int i=0;i<8;i++) { float a=i*3.14159f*2/8; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,cosf(a)*0.6f)); } break;
-        case 1: for (int i=-4;i<=4;i++) game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*8.0f,cy,i*0.15f*0.5f)); break;
-        case 2: for (int i=0;i<6;i++) { float o=sinf((animTimer+i*10)*0.15f)*0.5f; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-15+i*5.0f,cy,o)); } break;
+        case 0: for (int i=0;i<8;i++) { float a=i*3.14159f*2/8; game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,cosf(a)*0.6f)); } break;
+        case 1: for (int i=-4;i<=4;i++) game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*8.0f,cy,i*0.15f*0.5f)); break;
+        case 2: for (int i=0;i<6;i++) { float o=sinf((animTimer+i*10)*0.15f)*0.5f; game->enemyBullets.push_back(game->acquireEnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-15+i*5.0f,cy,o)); } break;
         } break;
     default: break;
     }
 }
 
-void Boss::render(Graphics& g) const {
+void Boss::render(Renderer& r) const {
+    float s = GAME_SCALE;
     float cx=centerX(), cy=centerY();
     Color bodyC, darkC;
     switch (phase) {
@@ -87,67 +89,62 @@ void Boss::render(Graphics& g) const {
 
     // Phase 3 愤怒光晕
     if (phase==BossPhase::PHASE_3) {
-        int pulse=(int)(sinf(animTimer*0.2f)*10);
+        int pulse=(int)(sinf(animTimer*0.2f)*10*s);
         for (int i=2;i>=0;i--) {
-            float r=48+pulse+i*5;
-            Pen pn(Color(100-i*30,255,50,10),2.0f+i);
-            g.DrawEllipse(&pn,cx-r,cy-r,r*2,r*2);
+            float radius=(48+pulse+i*5)*s;
+            r.drawEllipse(cx-radius,cy-radius,radius*2,radius*2, Color(100-i*30,255,50,10), (2.0f+i)*s);
         }
     }
 
     // 引擎火焰
     if (entered) {
         for (int i=0;i<3;i++) {
-            int fl=6+rand()%10;
-            Pen fo(Color(255,255,120+rand()%80,0),3);
-            g.DrawLine(&fo,cx-18+i*18.0f,y+height,cx-18+i*18.0f,y+height+fl);
-            Pen fi(Color(255,255,255,50),1);
-            g.DrawLine(&fi,cx-18+i*18.0f,y+height,cx-18+i*18.0f,y+height+fl/2);
+            int fl=(int)((6+rand()%10)*s);
+            r.drawLine(cx-(18-i*18)*s, y+height, cx-(18-i*18)*s, y+height+fl, Color(255,255,(BYTE)(120+rand()%80),0), 3*s);
+            r.drawLine(cx-(18-i*18)*s, y+height, cx-(18-i*18)*s, y+height+fl/2, Color(255,255,255,50), 1*s);
         }
     }
 
     // 阴影 / 主体
-    PointF body[8]={{cx,y},{cx-30,y+15},{cx-35,y+25},{cx-25,y+55},{cx+25,y+55},{cx+35,y+25},{cx+30,y+15}};
-    SolidBrush shBr(darkC); g.FillPolygon(&shBr,body,8);
-    PointF body2[8]={{cx,y},{cx-30,y+15},{cx-35,y+25},{cx-25,y+55},{cx+25,y+55},{cx+35,y+25},{cx+30,y+15}};
-    SolidBrush bdBr(bodyC); g.FillPolygon(&bdBr,body2,8);
-    Pen bdPn(darkC,2); g.DrawPolygon(&bdPn,body2,8);
+    PointF body[8]={{cx,y},{cx-30*s,y+15*s},{cx-35*s,y+25*s},{cx-25*s,y+55*s},{cx+25*s,y+55*s},{cx+35*s,y+25*s},{cx+30*s,y+15*s}};
+    r.fillPolygon(body,8,darkC);
+    r.fillPolygon(body,8,bodyC);
+    r.drawPolygon(body,8,darkC,2*s);
 
     // 机翼
-    SolidBrush wBr(darkC);
-    PointF lw[5]={{cx-30,cy-5},{cx-70,cy},{cx-65,cy+20},{cx-35,cy+15},{cx-30,cy-5}};
-    PointF rw[5]={{cx+30,cy-5},{cx+70,cy},{cx+65,cy+20},{cx+35,cy+15},{cx+30,cy-5}};
-    g.FillPolygon(&wBr,lw,5); g.FillPolygon(&wBr,rw,5);
+    PointF lw[5]={{cx-30*s,cy-5*s},{cx-70*s,cy},{cx-65*s,cy+20*s},{cx-35*s,cy+15*s},{cx-30*s,cy-5*s}};
+    PointF rw[5]={{cx+30*s,cy-5*s},{cx+70*s,cy},{cx+65*s,cy+20*s},{cx+35*s,cy+15*s},{cx+30*s,cy-5*s}};
+    r.fillPolygon(lw,5,darkC); r.fillPolygon(rw,5,darkC);
 
     // 驾驶舱
-    SolidBrush cg(Color(255,0,80,150)); g.FillEllipse(&cg,cx-13.0f,y+3.0f,26.0f,21.0f);
-    SolidBrush cp(Palette::BossCockpit); g.FillEllipse(&cp,cx-10.0f,y+5.0f,20.0f,17.0f);
+    r.fillEllipse(cx-13*s,y+3*s,26*s,21*s, Color(255,0,80,150));
+    r.fillEllipse(cx-10*s,y+5*s,20*s,17*s, Palette::BossCockpit);
 
     // 护甲闪烁
     if ((phase==BossPhase::PHASE_2||phase==BossPhase::PHASE_3)&&animTimer%30<15) {
-        Pen ap(Color(255,255,255,120),2); g.DrawLine(&ap,cx-25,y+20,cx+25,y+20);
+        r.drawLine(cx-25*s,y+20*s,cx+25*s,y+20*s, Color(255,255,255,120), 2*s);
     }
 }
 
-void Boss::renderHPBar(Graphics& g) const {
+void Boss::renderHPBar(Renderer& r) const {
     if (!entered) return;
-    float bw=220,bh=14,bx=WINDOW_WIDTH/2.0f-bw/2,by=4;
+    float uiSc = (std::max)(0.8f, (std::min)(WINDOW_WIDTH / 640.0f, 2.2f));
+    float bw=220*uiSc, bh=14*uiSc, bx=WINDOW_WIDTH/2.0f-bw/2, by=8*uiSc;
     float hpPct=(float)hp/maxHp; if(hpPct<0)hpPct=0;
 
-    SolidBrush bgBr(Color(255,40,40,40)); g.FillRectangle(&bgBr,bx,by,bw,bh);
+    r.fillRect(bx,by,bw,bh, Color(255,40,40,40));
     Color hpC = hpPct>0.5f ? Color(255,(int)(255*(1-hpPct)*2),220,0) : Color(255,255,(int)(220*hpPct*2),0);
-    SolidBrush hpBr(hpC); g.FillRectangle(&hpBr,bx,by,bw*hpPct,bh);
-    SolidBrush hl(Color(80,255,255,255)); g.FillRectangle(&hl,bx,by,bw*hpPct,3.0f);
-    Pen bdPn(Color(255,130,130,130),2); g.DrawRectangle(&bdPn,bx,by,bw,bh);
+    r.fillRect(bx,by,bw*hpPct,bh, hpC);
+    r.fillRect(bx,by,bw*hpPct,3.0f*uiSc, Color(80,255,255,255));
+    r.drawRect(bx,by,bw,bh, Color(255,130,130,130),2*uiSc);
 
-    FontFamily ff(L"Arial"); Font fnt(&ff,11,FontStyleBold,UnitPixel);
-    SolidBrush wh(Color::White); StringFormat sf; sf.SetAlignment(StringAlignmentCenter);
+    int fs = (int)(11 * uiSc);
     wchar_t buf[64]; swprintf_s(buf, _countof(buf), L"BOSS  %d / %d",hp,maxHp);
-    g.DrawString(buf,-1,&fnt,RectF(bx,by,bw,bh),&sf,&wh);
+    r.drawTextCentered(buf, bx, by, bw, bh, L"Arial", (float)fs, FontStyleBold, Color::White);
 
     if (phase==BossPhase::PHASE_2||phase==BossPhase::PHASE_3) {
-        SolidBrush ph(Color(255,phase==BossPhase::PHASE_3?255:255,phase==BossPhase::PHASE_3?40:180,0));
+        Color ph(255,phase==BossPhase::PHASE_3?255:255,phase==BossPhase::PHASE_3?40:180,0);
         const wchar_t* pt=phase==BossPhase::PHASE_3?L"CRITICAL":L"DANGER";
-        g.DrawString(pt,-1,&fnt,RectF(bx,by+bh+3,bw,by+bh+16),&sf,&ph);
+        r.drawTextCentered(pt, bx, by+bh+3*uiSc, bw, 16*uiSc, L"Arial", (float)fs, FontStyleBold, ph);
     }
 }

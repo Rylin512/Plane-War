@@ -1,4 +1,5 @@
 #include "Enemy.h"
+#include "Renderer.h"
 #include <cmath>
 
 using namespace Gdiplus;
@@ -22,63 +23,60 @@ void Enemy::update() {
     if (shootTimer>0) shootTimer--;
 }
 
-void Enemy::render(Graphics& g) const {
+void Enemy::render(Renderer& r) const {
     float sc = GAME_SCALE;
     float cx=centerX(), cy=centerY();
 
     switch (type) {
     case EnemyType::NORMAL: {
-        // 异星战机 — 倒三角 + 触角引擎
         // 光晕
-        for (int i=1;i>=0;i--) { Pen gp(Color(255,80-i*30,8,8),1+i); g.DrawEllipse(&gp,cx-22*sc,cy-22*sc,44*sc,44*sc); }
+        for (int i=1;i>=0;i--) r.drawEllipse(cx-22*sc, cy-22*sc, 44*sc, 44*sc, Color(255,80-i*30,8,8), (float)(1+i));
         // 机身
         PointF pts[5]={{cx,cy+height/2.0f},{cx-width/2.0f,cy-height/2.0f},{cx-width/4.0f,cy-height/4.0f},{cx+width/4.0f,cy-height/4.0f},{cx+width/2.0f,cy-height/2.0f}};
-        SolidBrush br(Color(255,220,35,35)); g.FillPolygon(&br,pts,5);
-        Pen pn(Color(255,140,20,20),1.5f*sc); g.DrawPolygon(&pn,pts,5);
+        r.fillPolygon(pts, 5, Color(255,220,35,35));
+        r.drawPolygon(pts, 5, Color(255,140,20,20), 1.5f*sc);
         // 装甲板
-        Pen ap(Color(255,180,50,50),1*sc); g.DrawLine(&ap,cx,cy-height/2.0f+4*sc,cx,cy+height/2.0f-4*sc);
+        r.drawLine(cx, cy-height/2.0f+4*sc, cx, cy+height/2.0f-4*sc, Color(255,180,50,50), 1*sc);
         // 侧翼触角
-        Pen wp(Color(255,200,30,30),2*sc);
-        g.DrawLine(&wp,cx-width/2.0f,cy-height/4.0f,cx-width/2.0f-8*sc,cy+4*sc);
-        g.DrawLine(&wp,cx+width/2.0f,cy-height/4.0f,cx+width/2.0f+8*sc,cy+4*sc);
+        r.drawLine(cx-width/2.0f, cy-height/4.0f, cx-width/2.0f-8*sc, cy+4*sc, Color(255,200,30,30), 2*sc);
+        r.drawLine(cx+width/2.0f, cy-height/4.0f, cx+width/2.0f+8*sc, cy+4*sc, Color(255,200,30,30), 2*sc);
         // 引擎点
-        SolidBrush ep(Color(255,255,200,100)); g.FillEllipse(&ep,cx-width/2.0f-9*sc,cy+3*sc,4*sc,4*sc); g.FillEllipse(&ep,cx+width/2.0f+5*sc,cy+3*sc,4*sc,4*sc);
+        r.fillEllipse(cx-width/2.0f-9*sc, cy+3*sc, 4*sc, 4*sc, Color(255,255,200,100));
+        r.fillEllipse(cx+width/2.0f+5*sc, cy+3*sc, 4*sc, 4*sc, Color(255,255,200,100));
         // 眼睛
-        SolidBrush eb(Color(255,255,200,200)); g.FillEllipse(&eb,cx-3*sc,cy-2*sc,6*sc,5*sc);
-        SolidBrush ep2(Color(255,255,80,80)); g.FillEllipse(&ep2,cx-1*sc,cy-1*sc,2*sc,2*sc);
+        r.fillEllipse(cx-3*sc, cy-2*sc, 6*sc, 5*sc, Color(255,255,200,200));
+        r.fillEllipse(cx-1*sc, cy-1*sc, 2*sc, 2*sc, Color(255,255,80,80));
         break;
     }
     case EnemyType::FAST: {
-        // 高速截击机 — 锐角三角 + 速度纹
         PointF pts[3]={{cx,cy+height/2.0f},{cx-width/2.0f,cy-height/2.0f},{cx+width/2.0f,cy-height/2.0f}};
-        SolidBrush br(Color(255,255,160,0)); g.FillPolygon(&br,pts,3);
-        Pen pn(Color(255,200,110,0),1.5f*sc); g.DrawPolygon(&pn,pts,3);
+        r.fillPolygon(pts, 3, Color(255,255,160,0));
+        r.drawPolygon(pts, 3, Color(255,200,110,0), 1.5f*sc);
         // 速度线
-        Pen sp(Color(255,255,200,60),1*sc);
-        g.DrawLine(&sp,cx,cy-height/2.0f,cx,cy-height/2.0f-5*sc);
-        g.DrawLine(&sp,cx-5*sc,cy-height/2.0f+3*sc,cx-6*sc,cy-height/2.0f-2*sc);
-        g.DrawLine(&sp,cx+5*sc,cy-height/2.0f+3*sc,cx+6*sc,cy-height/2.0f-2*sc);
+        r.drawLine(cx, cy-height/2.0f, cx, cy-height/2.0f-5*sc, Color(255,255,200,60), 1*sc);
+        r.drawLine(cx-5*sc, cy-height/2.0f+3*sc, cx-6*sc, cy-height/2.0f-2*sc, Color(255,255,200,60), 1*sc);
+        r.drawLine(cx+5*sc, cy-height/2.0f+3*sc, cx+6*sc, cy-height/2.0f-2*sc, Color(255,255,200,60), 1*sc);
         // 引擎尾迹
-        Pen tp(Color(255,255,180,40),1.5f*sc);
-        g.DrawLine(&tp,cx,cy+height/2.0f-2*sc,cx,cy+height/2.0f+3*sc);
+        r.drawLine(cx, cy+height/2.0f-2*sc, cx, cy+height/2.0f+3*sc, Color(255,255,180,40), 1.5f*sc);
         break;
     }
     case EnemyType::SHOOTING: {
-        // 重装炮艇 — 六边形 + 炮塔
         // 光晕
-        for (int i=1;i>=0;i--) { Pen gp(Color(255,60-i*20,15,90),1+i); g.DrawEllipse(&gp,cx-24*sc,cy-24*sc,48*sc,48*sc); }
+        for (int i=1;i>=0;i--) r.drawEllipse(cx-24*sc, cy-24*sc, 48*sc, 48*sc, Color(255,60-i*20,15,90), (float)(1+i));
         // 机身六边形
         PointF hx[6]={{cx-12*sc,cy-15*sc},{cx+12*sc,cy-15*sc},{cx+17*sc,cy},{cx+12*sc,cy+15*sc},{cx-12*sc,cy+15*sc},{cx-17*sc,cy}};
-        SolidBrush br(Color(255,155,35,215)); g.FillPolygon(&br,hx,6);
-        Pen pn(Color(255,210,100,255),2*sc); g.DrawPolygon(&pn,hx,6);
+        r.fillPolygon(hx, 6, Color(255,155,35,215));
+        r.drawPolygon(hx, 6, Color(255,210,100,255), 2*sc);
         // 炮管
-        Pen gn(Color(255,255,70,255),2.5f*sc);
-        g.DrawLine(&gn,cx-6*sc,cy+15*sc,cx-6*sc,cy+15*sc+8*sc);
-        g.DrawLine(&gn,cx+6*sc,cy+15*sc,cx+6*sc,cy+15*sc+8*sc);
+        r.drawLine(cx-6*sc, cy+15*sc, cx-6*sc, cy+15*sc+8*sc, Color(255,255,70,255), 2.5f*sc);
+        r.drawLine(cx+6*sc, cy+15*sc, cx+6*sc, cy+15*sc+8*sc, Color(255,255,70,255), 2.5f*sc);
         // 炮口闪光
-        if (animFrame%20<5) { SolidBrush gf(Color(255,255,200,255)); g.FillEllipse(&gf,cx-7*sc,cy+15*sc+7*sc,3*sc,3*sc); g.FillEllipse(&gf,cx+5*sc,cy+15*sc+7*sc,3*sc,3*sc); }
+        if (animFrame%20<5) {
+            r.fillEllipse(cx-7*sc, cy+15*sc+7*sc, 3*sc, 3*sc, Color(255,255,200,255));
+            r.fillEllipse(cx+5*sc, cy+15*sc+7*sc, 3*sc, 3*sc, Color(255,255,200,255));
+        }
         // 护甲环
-        Pen ar(Color(255,200,80,240),1*sc); g.DrawEllipse(&ar,cx-10*sc,cy-8*sc,20*sc,16*sc);
+        r.drawEllipse(cx-10*sc, cy-8*sc, 20*sc, 16*sc, Color(255,200,80,240), 1*sc);
         break;
     }
     case EnemyType::BOSS: break;

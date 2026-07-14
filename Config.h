@@ -4,6 +4,8 @@
 #include <cwchar>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 
 // ============================================================
 // Config.h — 全局常量 / 调色板 / 多分辨率 / 自动射击
@@ -65,7 +67,12 @@ extern int WINDOW_WIDTH;
 extern int WINDOW_HEIGHT;
 static constexpr int FRAME_INTERVAL   = 16;
 static constexpr int LOGIC_HZ         = 60;
-static constexpr double TARGET_FRAME_TIME = 1.0 / 60.0;
+extern double TARGET_FRAME_TIME;  // 由刷新率设置动态调整
+
+// 刷新率预设
+static constexpr int REFRESH_RATES[]  = { 60, 75, 120, 144, 165, 240 };
+static constexpr int REFRESH_RATE_COUNT = 6;
+static constexpr int DEFAULT_REFRESH_RATE = 0;  // 60Hz
 
 struct Resolution { int width, height; const char* label; bool fullscreen; };
 static const Resolution RESOLUTIONS[] = {
