@@ -54,16 +54,12 @@ IDWriteTextFormat* Direct2DRenderer::getTextFormat(const wchar_t* family, float 
     auto it = textFormatCache.find(ks);
     if (it != textFormatCache.end()) return it->second.Get();
 
-    // DPI 修正：CreateTextFormat 使用 DIP，需要转换为物理像素
-    float dpiX = 96.0f, dpiY = 96.0f;
-    if (renderTarget) renderTarget->GetDpi(&dpiX, &dpiY);
-    float dipSize = size * 96.0f / dpiX;  // 物理像素 → DIP
-
+    // 渲染目标固定 96 DPI，DIP = 物理像素，无需转换
     ComPtr<IDWriteTextFormat> fmt;
     dwriteFactory->CreateTextFormat(family, nullptr,
         toDWriteWeight(style),
         (style & FontStyleItalic) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, dipSize, L"", &fmt);
+        DWRITE_FONT_STRETCH_NORMAL, size, L"", &fmt);
     // 立即设置对齐（不可变属性，创建后设置）
     switch (halign) {
     case 1: fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); break;
@@ -115,15 +111,20 @@ bool Direct2DRenderer::init(HWND hw, int w, int h) {
 
     RECT rc; GetClientRect(hwnd, &rc);
     D2D1_SIZE_U sz = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
-    hr = d2dFactory->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_HARDWARE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+    // 强制 96 DPI：DIP = 物理像素，与 GDI+ 坐标系一致
+    D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_HARDWARE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f);
+    hr = d2dFactory->CreateHwndRenderTarget(rtProps,
         D2D1::HwndRenderTargetProperties(hwnd, sz), &renderTarget);
     if (FAILED(hr)) {
         // 尝试软件渲染
-        hr = d2dFactory->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+        rtProps = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            96.0f, 96.0f);
+        hr = d2dFactory->CreateHwndRenderTarget(rtProps,
             D2D1::HwndRenderTargetProperties(hwnd, sz), &renderTarget);
         if (FAILED(hr)) return false;
     }

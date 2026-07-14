@@ -47,12 +47,17 @@ extern int WINDOW_WIDTH;
 extern int WINDOW_HEIGHT;
 static constexpr int FRAME_INTERVAL   = 16;
 static constexpr int LOGIC_HZ         = 60;
-extern double TARGET_FRAME_TIME;  // 由刷新率设置动态调整
+extern double TARGET_FRAME_TIME;  // 渲染帧率上限（不影响游戏逻辑速度）
 
 // 刷新率预设
 static constexpr int REFRESH_RATES[]  = { 60, 75, 120, 144, 165, 240 };
 static constexpr int REFRESH_RATE_COUNT = 6;
 static constexpr int DEFAULT_REFRESH_RATE = 0;  // 60Hz
+
+// 游戏速度档位（逻辑 tick 速率）
+static constexpr int TICK_RATES[]     = { 45, 60, 90 };
+static constexpr int TICK_RATE_COUNT  = 3;
+static constexpr int DEFAULT_TICK     = 1;  // 60 tick/s (中速)
 
 // 宽高比分类
 enum AspectRatio { AR_4_3, AR_16_9, AR_16_10, AR_21_9, AR_32_9, AR_COUNT };

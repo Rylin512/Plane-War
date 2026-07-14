@@ -164,6 +164,7 @@ public:
     int  settingsSelection, currentResolution, currentRefreshRate, stateTimer;
     int  settingsPage;        // 0=分辨率, 1=刷新率, 2=渲染选项
     int  currentAspectRatio;  // 当前宽高比类别索引
+    int  currentGameTick;     // 游戏速度档位 (0=Slow 45, 1=Med 60, 2=Fast 90)
     int  currentSkin;         // 当前皮肤索引
     bool antiAlias;           // 反锯齿开关
     bool perfMode;            // 性能模式
@@ -203,6 +204,7 @@ private:
     LARGE_INTEGER qpcFreq, qpcPrev;
     double deltaTime;
     int    menuCooldown;
+    float  currentFPS;       // 性能监视器：平滑帧率
 
     // ── 持久化渲染资源 (避免每帧分配) ──
     // 后台缓冲
