@@ -4,341 +4,150 @@
 #include "Bullet.h"
 #include <cmath>
 
-// ============================================================
-// 文件：Boss.cpp
-// 功能：Boss 敌机实现 — 多阶段 AI、弹幕模式、血条
-// ============================================================
+using namespace Gdiplus;
 
 Boss::Boss(float startX, int level)
     : Enemy(startX, -(float)BOSS_HEIGHT, BOSS_WIDTH, BOSS_HEIGHT, EnemyType::BOSS)
-    , phase(BossPhase::ENTRY)
-    , phaseTimer(0), patternTimer(0), patternIndex(0)
-    , targetX(WINDOW_WIDTH / 2.0f), entryTimer(60), entered(false)
-    , animTimer(0), wingAngle(0)
+    , phase(BossPhase::ENTRY), phaseTimer(0), patternTimer(0), patternIndex(0)
+    , targetX(WINDOW_WIDTH/2.0f), entryTimer(60), entered(false), animTimer(0)
 {
     speed = BOSS_SPEED;
-    hp = BOSS_BASE_HP + level * 10;
-    maxHp = hp;
-    scoreValue = BOSS_SCORE + level * 1000;
+    hp = BOSS_BASE_HP + level*10; maxHp = hp;
+    scoreValue = BOSS_SCORE + level*1000;
     type = EnemyType::BOSS;
 }
 
-BossPhase Boss::getCurrentPhase() const {
-    return phase;
-}
+BossPhase Boss::getCurrentPhase() const { return phase; }
 
 void Boss::updatePhase() {
-    float hpPercent = (float)hp / maxHp;
-
-    if (hpPercent > 0.66f) {
-        phase = (phase != BossPhase::PHASE_1) ? BossPhase::PHASE_1 : phase;
-    } else if (hpPercent > 0.33f) {
-        if (phase != BossPhase::PHASE_2) {
-            phase = BossPhase::PHASE_2;
-            phaseTimer = 0;
-            patternIndex = 0;
-        }
-    } else {
-        if (phase != BossPhase::PHASE_3) {
-            phase = BossPhase::PHASE_3;
-            phaseTimer = 0;
-            patternIndex = 0;
-        }
-    }
+    float hpPct = (float)hp/maxHp;
+    if (hpPct > 0.66f) phase = BossPhase::PHASE_1;
+    else if (hpPct > 0.33f) { if (phase!=BossPhase::PHASE_2) { phase=BossPhase::PHASE_2; phaseTimer=0; patternIndex=0; } }
+    else { if (phase!=BossPhase::PHASE_3) { phase=BossPhase::PHASE_3; phaseTimer=0; patternIndex=0; } }
 }
 
 void Boss::update() {
     animTimer++;
-
-    // 入场动画
     if (!entered) {
-        entryTimer--;
-        y += 1.5f;
-        if (y >= 50.0f) {
-            y = 50.0f;
-            entered = true;
-            phase = BossPhase::PHASE_1;
-        }
+        entryTimer--; y += 1.5f;
+        if (y >= 50.0f) { y = 50.0f; entered = true; phase = BossPhase::PHASE_1; }
         return;
     }
-
-    // 更新阶段
     updatePhase();
-
-    // 阶段行为
     switch (phase) {
-    case BossPhase::PHASE_1:
-        // 缓慢左右移动
-        targetX = WINDOW_WIDTH / 2.0f + sinf((float)animTimer * 0.02f) * 150.0f;
-        x += (targetX - x) * 0.02f;
-        // 限制边界
-        x = clamp(x, 0.0f, (float)(WINDOW_WIDTH - width));
-        break;
-
-    case BossPhase::PHASE_2:
-        // 快速左右移动
-        targetX = WINDOW_WIDTH / 2.0f + sinf((float)animTimer * 0.04f) * 200.0f;
-        x += (targetX - x) * 0.05f;
-        x = clamp(x, 0.0f, (float)(WINDOW_WIDTH - width));
-        break;
-
-    case BossPhase::PHASE_3:
-        // 激烈移动 + 追踪玩家
-        targetX = WINDOW_WIDTH / 2.0f + sinf((float)animTimer * 0.06f) * 180.0f;
-        x += (targetX - x) * 0.08f;
-        x = clamp(x, 0.0f, (float)(WINDOW_WIDTH - width));
-        break;
-
+    case BossPhase::PHASE_1: targetX=WINDOW_WIDTH/2.0f+sinf(animTimer*0.02f)*150; x+=(targetX-x)*0.02f; break;
+    case BossPhase::PHASE_2: targetX=WINDOW_WIDTH/2.0f+sinf(animTimer*0.04f)*200; x+=(targetX-x)*0.05f; break;
+    case BossPhase::PHASE_3: targetX=WINDOW_WIDTH/2.0f+sinf(animTimer*0.06f)*180; x+=(targetX-x)*0.08f; break;
     default: break;
     }
-
-    // 弹幕计时器
-    if (patternTimer > 0) patternTimer--;
-    phaseTimer++;
+    x = clamp(x, 0.0f, (float)(WINDOW_WIDTH-width));
+    if (patternTimer>0) patternTimer--; phaseTimer++;
 }
 
 void Boss::firePattern(Game* game) {
-    if (!entered || phase == BossPhase::DEFEATED || !game->player) return;
-    if (patternTimer > 0) return;
-
-    float cx = centerX();
-    float cy = y + height;
-
+    if (!entered||phase==BossPhase::DEFEATED||!game->player||patternTimer>0) return;
+    float cx=centerX(), cy=y+height;
     switch (phase) {
     case BossPhase::PHASE_1:
-        // 每隔60帧发射3颗瞄准子弹
-        patternTimer = 60;
-        {
-            float px = game->player->centerX();
-            float py = game->player->centerY();
-            float dx = px - cx;
-            float dy = py - cy;
-            float len = sqrtf(dx * dx + dy * dy);
-            if (len > 0) {
-                float baseAngle = dx / len;
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f, cy, baseAngle * 0.5f));
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f - 8, cy, (baseAngle - 0.15f) * 0.5f));
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f + 8, cy, (baseAngle + 0.15f) * 0.5f));
+        patternTimer=60; {
+            float px=game->player->centerX(), py=game->player->centerY();
+            float dx=px-cx, dy=py-cy, len=sqrtf(dx*dx+dy*dy);
+            if (len>0) {
+                float ba=dx/len;
+                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,ba*0.5f));
+                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-8,cy,(ba-0.15f)*0.5f));
+                game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+8,cy,(ba+0.15f)*0.5f));
             }
-        }
-        break;
-
+        } break;
     case BossPhase::PHASE_2:
-        // 扇形弹幕：5发散射 + 每45帧一次
-        patternTimer = 45;
-        for (int i = -2; i <= 2; i++) {
-            float angle = (float)i * 0.2f;
-            game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f + i * 10.0f, cy, angle * 0.5f));
-        }
-        // 偶尔追加瞄准弹
-        if (rand() % 3 == 0) {
-            float dx = game->player->centerX() - cx;
-            float len = sqrtf(dx * dx + 1.0f);
-            game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f, cy, (dx / len) * 0.5f));
-        }
+        patternTimer=45;
+        for (int i=-2;i<=2;i++) game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*10.0f,cy,i*0.2f*0.5f));
+        if (rand()%3==0) { float dx=game->player->centerX()-cx; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,(dx/sqrtf(dx*dx+1))*0.5f)); }
         break;
-
     case BossPhase::PHASE_3:
-        // 环形弹幕 + 密集射击
-        patternTimer = 35;
-        patternIndex = (patternIndex + 1) % 3;
+        patternTimer=35; patternIndex=(patternIndex+1)%3;
         switch (patternIndex) {
-        case 0:
-            // 8方向环形弹幕
-            for (int i = 0; i < 8; i++) {
-                float angle = (float)i * 3.14159f * 2.0f / 8.0f;
-                float ax = cosf(angle) * 0.6f;
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f, cy, ax));
-            }
-            break;
-        case 1:
-            // 扇形9发散射
-            for (int i = -4; i <= 4; i++) {
-                float angle = (float)i * 0.15f;
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f + i * 8.0f, cy, angle * 0.5f));
-            }
-            break;
-        case 2:
-            // 双向螺旋弹幕
-            for (int i = 0; i < 6; i++) {
-                float offset = sinf((float)(animTimer + i * 10) * 0.15f) * 0.5f;
-                game->enemyBullets.push_back(new EnemyBullet(cx - BULLET_ENEMY_WIDTH / 2.0f - 15 + i * 5.0f, cy, offset));
-            }
-            break;
-        }
-        break;
-
+        case 0: for (int i=0;i<8;i++) { float a=i*3.14159f*2/8; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f,cy,cosf(a)*0.6f)); } break;
+        case 1: for (int i=-4;i<=4;i++) game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f+i*8.0f,cy,i*0.15f*0.5f)); break;
+        case 2: for (int i=0;i<6;i++) { float o=sinf((animTimer+i*10)*0.15f)*0.5f; game->enemyBullets.push_back(new EnemyBullet(cx-BULLET_ENEMY_WIDTH/2.0f-15+i*5.0f,cy,o)); } break;
+        } break;
     default: break;
     }
 }
 
-void Boss::render(HDC hdc) const {
-    float cx = centerX();
-    float cy = centerY();
-
-    // 阶段颜色变化
-    COLORREF bodyColor;
+void Boss::render(Graphics& g) const {
+    float cx=centerX(), cy=centerY();
+    Color bodyC, darkC;
     switch (phase) {
-    case BossPhase::PHASE_1: bodyColor = RGB(200, 30, 30); break;
-    case BossPhase::PHASE_2: bodyColor = RGB(220, 80, 20); break;
-    case BossPhase::PHASE_3: bodyColor = RGB(255, 30, 30); break;
-    default: bodyColor = RGB(200, 30, 30); break;
+    case BossPhase::PHASE_1: bodyC=Palette::BossPhase1; darkC=Palette::BossPhase1Dark; break;
+    case BossPhase::PHASE_2: bodyC=Palette::BossPhase2; darkC=Palette::BossPhase2Dark; break;
+    case BossPhase::PHASE_3: bodyC=Palette::BossPhase3; darkC=Palette::BossPhase3Dark; break;
+    default: bodyC=Palette::BossPhase1; darkC=Palette::BossPhase1Dark; break;
     }
 
-    COLORREF darkColor = RGB(
-        (int)(GetRValue(bodyColor) * 0.6),
-        (int)(GetGValue(bodyColor) * 0.6),
-        (int)(GetBValue(bodyColor) * 0.6)
-    );
+    // Phase 3 愤怒光晕
+    if (phase==BossPhase::PHASE_3) {
+        int pulse=(int)(sinf(animTimer*0.2f)*10);
+        for (int i=2;i>=0;i--) {
+            float r=48+pulse+i*5;
+            Pen pn(Color(100-i*30,255,50,10),2.0f+i);
+            g.DrawEllipse(&pn,cx-r,cy-r,r*2,r*2);
+        }
+    }
 
-    // ---- 引擎光效 ----
+    // 引擎火焰
     if (entered) {
-        for (int i = 0; i < 3; i++) {
-            int flicker = 4 + rand() % 8;
-            HPEN glowPen = CreatePen(PS_SOLID, 2, RGB(255, 150 + rand() % 106, 0));
-            HPEN oldPen = (HPEN)SelectObject(hdc, glowPen);
-            MoveToEx(hdc, (int)(cx - 15 + i * 15), (int)(y + height), nullptr);
-            LineTo(hdc, (int)(cx - 15 + i * 15), (int)(y + height + flicker));
-            SelectObject(hdc, oldPen);
-            DeleteObject(glowPen);
+        for (int i=0;i<3;i++) {
+            int fl=6+rand()%10;
+            Pen fo(Color(255,255,120+rand()%80,0),3);
+            g.DrawLine(&fo,cx-18+i*18.0f,y+height,cx-18+i*18.0f,y+height+fl);
+            Pen fi(Color(255,255,255,50),1);
+            g.DrawLine(&fi,cx-18+i*18.0f,y+height,cx-18+i*18.0f,y+height+fl/2);
         }
     }
 
-    // ---- 主体（大型多边形） ----
-    HBRUSH bodyBrush = CreateSolidBrush(bodyColor);
-    HPEN bodyPen = CreatePen(PS_SOLID, 2, darkColor);
-    HPEN oldPen = (HPEN)SelectObject(hdc, bodyPen);
-    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, bodyBrush);
+    // 阴影 / 主体
+    PointF body[8]={{cx,y},{cx-30,y+15},{cx-35,y+25},{cx-25,y+55},{cx+25,y+55},{cx+35,y+25},{cx+30,y+15}};
+    SolidBrush shBr(darkC); g.FillPolygon(&shBr,body,8);
+    PointF body2[8]={{cx,y},{cx-30,y+15},{cx-35,y+25},{cx-25,y+55},{cx+25,y+55},{cx+35,y+25},{cx+30,y+15}};
+    SolidBrush bdBr(bodyC); g.FillPolygon(&bdBr,body2,8);
+    Pen bdPn(darkC,2); g.DrawPolygon(&bdPn,body2,8);
 
-    // 主机身
-    POINT body[8] = {
-        { (int)(cx),                   (int)(y) },                    // 顶部尖端
-        { (int)(cx - 30),              (int)(y + 15) },
-        { (int)(cx - 35),              (int)(y + 25) },
-        { (int)(cx - 25),              (int)(y + 55) },
-        { (int)(cx + 25),              (int)(y + 55) },
-        { (int)(cx + 35),              (int)(y + 25) },
-        { (int)(cx + 30),              (int)(y + 15) },
-        { (int)(cx),                   (int)(y) },
-    };
-    Polygon(hdc, body, 8);
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(bodyBrush);
-    DeleteObject(bodyPen);
+    // 机翼
+    SolidBrush wBr(darkC);
+    PointF lw[5]={{cx-30,cy-5},{cx-70,cy},{cx-65,cy+20},{cx-35,cy+15},{cx-30,cy-5}};
+    PointF rw[5]={{cx+30,cy-5},{cx+70,cy},{cx+65,cy+20},{cx+35,cy+15},{cx+30,cy-5}};
+    g.FillPolygon(&wBr,lw,5); g.FillPolygon(&wBr,rw,5);
 
-    // ---- 机翼 ----
-    HBRUSH wingBrush = CreateSolidBrush(darkColor);
-    HPEN wingPen = CreatePen(PS_SOLID, 2, darkColor);
-    oldPen = (HPEN)SelectObject(hdc, wingPen);
-    oldBrush = (HBRUSH)SelectObject(hdc, wingBrush);
+    // 驾驶舱
+    SolidBrush cg(Color(255,0,80,150)); g.FillEllipse(&cg,cx-13.0f,y+3.0f,26.0f,21.0f);
+    SolidBrush cp(Palette::BossCockpit); g.FillEllipse(&cp,cx-10.0f,y+5.0f,20.0f,17.0f);
 
-    // 左翼
-    POINT lwing[5] = {
-        { (int)(cx - 30), (int)(cy - 5) },
-        { (int)(cx - 65), (int)(cy) },
-        { (int)(cx - 60), (int)(cy + 20) },
-        { (int)(cx - 35), (int)(cy + 15) },
-        { (int)(cx - 30), (int)(cy - 5) },
-    };
-    Polygon(hdc, lwing, 5);
-
-    // 右翼
-    POINT rwing[5] = {
-        { (int)(cx + 30), (int)(cy - 5) },
-        { (int)(cx + 65), (int)(cy) },
-        { (int)(cx + 60), (int)(cy + 20) },
-        { (int)(cx + 35), (int)(cy + 15) },
-        { (int)(cx + 30), (int)(cy - 5) },
-    };
-    Polygon(hdc, rwing, 5);
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(wingBrush);
-    DeleteObject(wingPen);
-
-    // ---- 驾驶舱 ----
-    HBRUSH cockpitBrush = CreateSolidBrush(RGB(0, 200, 255));
-    HPEN cockpitPen = CreatePen(PS_SOLID, 1, RGB(0, 150, 200));
-    oldPen = (HPEN)SelectObject(hdc, cockpitPen);
-    oldBrush = (HBRUSH)SelectObject(hdc, cockpitBrush);
-    Ellipse(hdc, (int)(cx - 10), (int)(y + 5), (int)(cx + 10), (int)(y + 22));
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(cockpitBrush);
-    DeleteObject(cockpitPen);
-
-    // ---- 护甲板 ----
-    if (phase == BossPhase::PHASE_2 || phase == BossPhase::PHASE_3) {
-        HPEN armorPen = CreatePen(PS_SOLID, 1, RGB(255, 255, 100));
-        oldPen = (HPEN)SelectObject(hdc, armorPen);
-        // 闪烁护甲线
-        if (animTimer % 20 < 10) {
-            MoveToEx(hdc, (int)(cx - 25), (int)(y + 20), nullptr);
-            LineTo(hdc, (int)(cx + 25), (int)(y + 20));
-        }
-        SelectObject(hdc, oldPen);
-        DeleteObject(armorPen);
-    }
-
-    // ---- 第三阶段愤怒光晕 ----
-    if (phase == BossPhase::PHASE_3) {
-        HPEN ragePen = CreatePen(PS_SOLID, 2, RGB(255, 50, 0));
-        oldPen = (HPEN)SelectObject(hdc, ragePen);
-        HBRUSH nullBr = (HBRUSH)GetStockObject(NULL_BRUSH);
-        oldBrush = (HBRUSH)SelectObject(hdc, nullBr);
-        int radius = 45 + (int)(sinf((float)animTimer * 0.2f) * 8.0f);
-        Ellipse(hdc, (int)(cx - radius), (int)(cy - radius),
-            (int)(cx + radius), (int)(cy + radius));
-        SelectObject(hdc, oldBrush);
-        SelectObject(hdc, oldPen);
-        DeleteObject(ragePen);
+    // 护甲闪烁
+    if ((phase==BossPhase::PHASE_2||phase==BossPhase::PHASE_3)&&animTimer%30<15) {
+        Pen ap(Color(255,255,255,120),2); g.DrawLine(&ap,cx-25,y+20,cx+25,y+20);
     }
 }
 
-void Boss::renderHPBar(HDC hdc) const {
+void Boss::renderHPBar(Graphics& g) const {
     if (!entered) return;
+    float bw=220,bh=14,bx=WINDOW_WIDTH/2.0f-bw/2,by=4;
+    float hpPct=(float)hp/maxHp; if(hpPct<0)hpPct=0;
 
-    int barWidth = 200;
-    int barHeight = 12;
-    int barX = WINDOW_WIDTH / 2 - barWidth / 2;
-    int barY = 5;
+    SolidBrush bgBr(Color(255,40,40,40)); g.FillRectangle(&bgBr,bx,by,bw,bh);
+    Color hpC = hpPct>0.5f ? Color(255,(int)(255*(1-hpPct)*2),220,0) : Color(255,255,(int)(220*hpPct*2),0);
+    SolidBrush hpBr(hpC); g.FillRectangle(&hpBr,bx,by,bw*hpPct,bh);
+    SolidBrush hl(Color(80,255,255,255)); g.FillRectangle(&hl,bx,by,bw*hpPct,3.0f);
+    Pen bdPn(Color(255,130,130,130),2); g.DrawRectangle(&bdPn,bx,by,bw,bh);
 
-    float hpPercent = (float)hp / maxHp;
+    FontFamily ff(L"Arial"); Font fnt(&ff,11,FontStyleBold,UnitPixel);
+    SolidBrush wh(Color::White); StringFormat sf; sf.SetAlignment(StringAlignmentCenter);
+    wchar_t buf[64]; swprintf_s(buf, _countof(buf), L"BOSS  %d / %d",hp,maxHp);
+    g.DrawString(buf,-1,&fnt,RectF(bx,by,bw,bh),&sf,&wh);
 
-    // 背景
-    HBRUSH bgBrush = CreateSolidBrush(RGB(60, 60, 60));
-    RECT bgRc = { barX, barY, barX + barWidth, barY + barHeight };
-    FillRect(hdc, &bgRc, bgBrush);
-    DeleteObject(bgBrush);
-
-    // HP 颜色：绿→黄→红
-    COLORREF hpColor;
-    if (hpPercent > 0.5f)
-        hpColor = RGB((int)(255 * (1.0f - hpPercent) * 2), 255, 0);
-    else
-        hpColor = RGB(255, (int)(255 * hpPercent * 2), 0);
-
-    HBRUSH hpBrush = CreateSolidBrush(hpColor);
-    RECT hpRc = { barX, barY, barX + (int)(barWidth * hpPercent), barY + barHeight };
-    FillRect(hdc, &hpRc, hpBrush);
-    DeleteObject(hpBrush);
-
-    // 边框
-    HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(150, 150, 150));
-    HPEN oldPen = (HPEN)SelectObject(hdc, borderPen);
-    HBRUSH nullBr = (HBRUSH)GetStockObject(NULL_BRUSH);
-    HBRUSH oldBr = (HBRUSH)SelectObject(hdc, nullBr);
-    Rectangle(hdc, barX, barY, barX + barWidth, barY + barHeight);
-    SelectObject(hdc, oldPen);
-    SelectObject(hdc, oldBr);
-    DeleteObject(borderPen);
-
-    // Boss 名称 + HP 文字
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(255, 255, 255));
-    char buf[64];
-    sprintf_s(buf, "BOSS  HP: %d/%d", hp, maxHp);
-    RECT textRc = { barX, barY, barX + barWidth, barY + barHeight };
-    DrawTextA(hdc, buf, -1, &textRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (phase==BossPhase::PHASE_2||phase==BossPhase::PHASE_3) {
+        SolidBrush ph(Color(255,phase==BossPhase::PHASE_3?255:255,phase==BossPhase::PHASE_3?40:180,0));
+        const wchar_t* pt=phase==BossPhase::PHASE_3?L"CRITICAL":L"DANGER";
+        g.DrawString(pt,-1,&fnt,RectF(bx,by+bh+3,bw,by+bh+16),&sf,&ph);
+    }
 }
