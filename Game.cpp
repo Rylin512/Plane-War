@@ -8,6 +8,8 @@
 #ifndef __MINGW32__
 #include "D2DRenderer.h"
 #endif
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
 #include <cstdio>
 #include <cmath>
 #include <cwchar>
@@ -152,13 +154,13 @@ Game::Game()
     , mouseX(0), mouseY(0), mouseClicked(false)
     , state(GameState::MENU), menuSelection(MenuOption::START_GAME)
     , settingsSelection(0), currentResolution(0), currentRefreshRate(DEFAULT_REFRESH_RATE), stateTimer(0)
-    , settingsPage(0), currentAspectRatio(AR_16_9), currentSkin(0), antiAlias(true), perfMode(false)
+    , settingsPage(0), currentAspectRatio(AR_16_9), currentGameTick(DEFAULT_TICK), currentSkin(0), antiAlias(true), perfMode(false)
     , shakeTimer(0), shakeIntensity(0)
     , currentLevel(0), scoreToNextLevel(500), spawnInterval(40), fastEnemyChance(0.1f), shootingEnemyChance(0)
     , enemySpawnTimer(0), enemiesKilledThisLevel(0)
     , bossSpawned(false), bossDefeated(false)
     , score(0), highScore(0), player(nullptr), nameLength(0)
-    , deltaTime(0), menuCooldown(0)
+    , deltaTime(0), menuCooldown(0), currentFPS(0.0f)
     , memDC(nullptr), memBmp(nullptr), oldBmp(nullptr), backGraphics(nullptr)
     , cachedBackground(nullptr)
     , ffConsolas(nullptr), ffArial(nullptr), fntHUD(nullptr), fntHUDSmall(nullptr)
@@ -515,6 +517,9 @@ void Game::resetGame() {
 
 void Game::run() {
     MSG msg;
+    const double LOGIC_DT = 1.0 / 60.0;   // 固定 60 Hz 逻辑更新 — 不受刷新率影响
+    double accumulator = 0.0;
+
     while (true) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { hwnd = nullptr; return; }
@@ -524,22 +529,41 @@ void Game::run() {
 
         LARGE_INTEGER frameStart;
         QueryPerformanceCounter(&frameStart);
-        deltaTime = (double)(frameStart.QuadPart - qpcPrev.QuadPart) / qpcFreq.QuadPart;
+        double frameDt = (double)(frameStart.QuadPart - qpcPrev.QuadPart) / qpcFreq.QuadPart;
         qpcPrev = frameStart;
 
-        handleInput();
-        if (!hwnd) break;  // 退出时立即跳出，跳过渲染和 busy-wait
+        // 防止断点/休眠后时间螺旋
+        if (frameDt > 0.25) frameDt = 0.25;
 
-        update();
-        collide();
+        // ── 平滑 FPS（指数移动平均） ──
+        if (frameDt > 0.0) {
+            float instantFPS = (float)(1.0 / frameDt);
+            currentFPS = currentFPS > 0.0f ? currentFPS * 0.9f + instantFPS * 0.1f : instantFPS;
+        }
+
+        handleInput();
+        if (!hwnd) break;
+
+        // ── 可变步长逻辑（由 gameTickRate 控制） ──
+        double logicDt = 1.0 / TICK_RATES[currentGameTick];
+        accumulator += frameDt;
+        while (accumulator >= logicDt) {
+            update();
+            collide();
+            accumulator -= logicDt;
+            frameCount++;
+        }
+
         render();
 
-        // 精确帧率对齐 (60fps)
+        // ── 渲染帧率上限 (省电，不影响游戏速度) ──
         LARGE_INTEGER now;
-        do { QueryPerformanceCounter(&now); }
-        while ((double)(now.QuadPart - frameStart.QuadPart) / qpcFreq.QuadPart < TARGET_FRAME_TIME);
-
-        frameCount++;
+        QueryPerformanceCounter(&now);
+        double elapsed = (double)(now.QuadPart - frameStart.QuadPart) / qpcFreq.QuadPart;
+        if (elapsed < TARGET_FRAME_TIME) {
+            DWORD sleepMs = (DWORD)((TARGET_FRAME_TIME - elapsed) * 1000.0);
+            if (sleepMs > 0) Sleep(sleepMs);
+        }
     }
 }
 
@@ -651,13 +675,14 @@ void Game::handleInput() {
                 menuCooldown = 15;
             }
         } else {  // 渲染选项
-            int optCount = d2dAvailable ? 3 : 2;
+            int optCount = d2dAvailable ? 4 : 3;
             if (up)   { settingsSelection=(settingsSelection-1+optCount)%optCount; menuCooldown=8; }
             if (dn)   { settingsSelection=(settingsSelection+1)%optCount; menuCooldown=8; }
             if (enter) {
                 if (settingsSelection == 0) antiAlias = !antiAlias;
                 else if (settingsSelection == 1) perfMode = !perfMode;
                 else if (settingsSelection == 2) { useDirect2D = !useDirect2D; recreateRenderer(); }
+                else if (settingsSelection == 3) { currentGameTick = (currentGameTick + 1) % TICK_RATE_COUNT; }
                 menuCooldown = 12;
             }
         }
@@ -767,12 +792,30 @@ void Game::handleInput() {
             if (clickIn(mx, my, 50 * sc, contentY, WINDOW_WIDTH - 50 * sc, optStep)) { antiAlias = !antiAlias; menuCooldown = 12; return; }
             if (clickIn(mx, my, 50 * sc, contentY + optStep, WINDOW_WIDTH - 50 * sc, optStep)) { perfMode = !perfMode; menuCooldown = 12; return; }
             if (d2dAvailable && clickIn(mx, my, 50 * sc, contentY + 2 * optStep, WINDOW_WIDTH - 50 * sc, optStep)) { useDirect2D = !useDirect2D; recreateRenderer(); menuCooldown = 12; return; }
+            if (clickIn(mx, my, 50 * sc, contentY + 3 * optStep, WINDOW_WIDTH - 50 * sc, optStep)) { currentGameTick = (currentGameTick + 1) % TICK_RATE_COUNT; menuCooldown = 12; return; }
         }
     }
 
     if (state == GameState::PAUSED) {
         float sc = (std::min)(WINDOW_HEIGHT / 480.0f, 2.2f);
+        // RESUME 按钮
         if (clickBackBtn(mx, my, sc)) { state = GameState::PLAYING; return; }
+        // MENU 按钮（RESUME 下方）
+        float btnW = (std::max)(70.0f, 80 * sc), btnH = (std::max)(20.0f, 24 * sc);
+        float bx = WINDOW_WIDTH - btnW - (std::max)(8.0f, 12 * sc);
+        float by = (std::max)(4.0f, 8 * sc) + btnH + 4 * sc;
+        if (clickIn(mx, my, bx, by, btnW, btnH)) {
+            delete player; player = nullptr;
+            for (auto* e : enemies) delete e;
+            for (auto* b : playerBullets) { b->alive = false; releaseBullet(b); }
+            for (auto* b : enemyBullets)  { b->alive = false; releaseBullet(b); }
+            for (auto* i : items) delete i;
+            enemies.clear(); playerBullets.clear();
+            enemyBullets.clear(); items.clear();
+            particles.clear();
+            state = GameState::MENU;
+            return;
+        }
         state = GameState::PLAYING; return;
     }
 
@@ -1057,7 +1100,16 @@ void Game::checkEnemyBulletPlayerCollisions() {
     for (auto* b:enemyBullets) {
         if (!b->alive) continue;
         if (checkCollision(*b,*player)) {
-            b->alive=false; player->takeDamage();
+            b->alive=false;
+            // 护盾格挡：一次性，蓝色特效，立即消失
+            if (player->shieldActive) {
+                player->shieldActive = false;
+                player->shieldTimer = 0;
+                spawnParticles(player->centerX(),player->centerY(),12,
+                    Color(255,100,200,255), Color(255,50,150,255), 0.8f, 3.0f, 0.5f, 2.0f);
+                return;
+            }
+            player->takeDamage();
             spawnParticles(player->centerX(),player->centerY(),15,Color(255,255,200,60),Color(255,255,150,30),0.5f,2.5f,0.5f,1.5f);
             shakeTimer=10; shakeIntensity=4;
             if (player->lives<=0) state=GameState::GAME_OVER;
@@ -1071,6 +1123,15 @@ void Game::checkEnemyPlayerCollisions() {
     for (auto* e:enemies) {
         if (!e->alive) continue;
         if (checkCollision(*player,*e)) {
+            // 护盾格挡身体撞击：一次性，蓝色特效，立即消失
+            if (player->shieldActive) {
+                player->shieldActive = false;
+                player->shieldTimer = 0;
+                e->alive = false;
+                spawnParticles(e->centerX(),e->centerY(),15,
+                    Color(255,100,200,255), Color(255,50,150,255), 1.0f, 4.0f, 1.0f, 3.0f);
+                return;
+            }
             e->alive=false; player->takeDamage();
             spawnParticles(e->centerX(),e->centerY(),EXPLOSION_PARTICLES/2,Palette::ParticleExplosion,Palette::ParticleExplosion,0.5f,2.5f,1,2);
             spawnParticles(player->centerX(),player->centerY(),12,Color(255,255,200,60),Color(255,255,150,30),0.5f,2,0.5f,1.5f);
@@ -1197,7 +1258,7 @@ void Game::saveSettings() {
     if (h == INVALID_HANDLE_VALUE) return;
 
     DWORD bw;
-    int vals[] = { currentResolution, currentRefreshRate, antiAlias ? 1 : 0, perfMode ? 1 : 0, useDirect2D ? 1 : 0, currentSkin };
+    int vals[] = { currentResolution, currentRefreshRate, antiAlias ? 1 : 0, perfMode ? 1 : 0, useDirect2D ? 1 : 0, currentSkin, currentGameTick };
     WriteFile(h, vals, sizeof(vals), &bw, nullptr);
     CloseHandle(h);
 }
@@ -1210,7 +1271,7 @@ void Game::loadSettings() {
     if (h == INVALID_HANDLE_VALUE) return;
 
     DWORD br;
-    int vals[6] = {};
+    int vals[7] = {};
     if (ReadFile(h, vals, sizeof(vals), &br, nullptr) && br >= 5 * (DWORD)sizeof(int)) {
         currentResolution = (std::max)(0, (std::min)(vals[0], RESOLUTION_COUNT - 1));
         currentRefreshRate = (std::max)(0, (std::min)(vals[1], REFRESH_RATE_COUNT - 1));
@@ -1218,6 +1279,7 @@ void Game::loadSettings() {
         perfMode = vals[3] != 0;
         useDirect2D = vals[4] != 0;
         if (br >= 6 * (DWORD)sizeof(int)) currentSkin = (std::max)(0, (std::min)(vals[5], SKIN_COUNT - 1));
+        if (br >= 7 * (DWORD)sizeof(int)) currentGameTick = (std::max)(0, (std::min)(vals[6], TICK_RATE_COUNT - 1));
         TARGET_FRAME_TIME = 1.0 / REFRESH_RATES[currentRefreshRate];
     }
     CloseHandle(h);
@@ -1351,25 +1413,25 @@ void Game::renderHUD(Renderer& r) {
     float scW = (std::max)(0.7f, (std::min)(WINDOW_WIDTH / 640.0f, 2.2f));
     float scH = (std::max)(0.7f, (std::min)(WINDOW_HEIGHT / 480.0f, 2.2f));
     float sc = (scW + scH) / 2.0f;
-    int fs = (int)(12 * sc), fsSm = (int)(9 * sc);
-    float lineH = 18 * sc;  // 行高
+    int fs = (int)(18 * sc), fsSm = (int)(14 * sc);
+    float lineH = 26 * sc;  // 行高
     const wchar_t* ff = L"Consolas";
 
     char buf[128];
-    float pad = 8 * sc;
+    float pad = 10 * sc;
 
     // ── 左上信息 ──
     float yPos = pad;
 
     // 生命值条（独立一行）
-    float lifeBarW = 100 * sc, lifeBarH = 8 * sc;
+    float lifeBarW = 110 * sc, lifeBarH = 9 * sc;
     r.fillRect(pad, yPos + (lineH - lifeBarH) / 2, lifeBarW, lifeBarH, Color(255, 40, 40, 40));
     float lifePct = (float)player->lives / PLAYER_MAX_LIVES;
     Color lifeC = lifePct > 0.5f ? Color(255, 60, 220, 60) : (lifePct > 0.25f ? Color(255, 255, 200, 40) : Color(255, 255, 60, 60));
     r.fillRect(pad, yPos + (lineH - lifeBarH) / 2, lifeBarW * lifePct, lifeBarH, lifeC);
     r.drawRect(pad, yPos + (lineH - lifeBarH) / 2, lifeBarW, lifeBarH, Color(255, 150, 150, 150), 1);
     sprintf_s(buf, sizeof(buf), "HP %d/%d", player->lives, PLAYER_MAX_LIVES);
-    r.drawText(widen(buf), pad + lifeBarW + 6 * sc, yPos, ff, (float)fs, FontStyleBold, lifeC);
+    r.drawTextLeft(widen(buf), pad + lifeBarW + 8 * sc, yPos, WINDOW_WIDTH - pad - lifeBarW - 8 * sc, lineH, ff, (float)fs, FontStyleBold, lifeC);
     yPos += lineH;
 
     sprintf_s(buf, sizeof(buf), "SCORE %d", score);
@@ -1392,7 +1454,7 @@ void Game::renderHUD(Renderer& r) {
     }
 
     // ── 右上信息（右对齐） ──
-    float rxW = 160 * sc;
+    float rxW = 200 * sc;
     float rx = WINDOW_WIDTH - rxW - pad;
     yPos = pad;
     sprintf_s(buf, sizeof(buf), "LV %d", currentLevel);
@@ -1410,6 +1472,19 @@ void Game::renderHUD(Renderer& r) {
     yPos += lineH;
     sprintf_s(buf, sizeof(buf), "BST %d", highScore);
     r.drawTextLeft(widen(buf), rx, yPos, rxW, lineH, ff, (float)fs, FontStyleBold, Color(255, 140, 140, 140));
+    yPos += lineH;
+
+    // ── 性能监视器（右上角） ──
+    {
+        // 内存占用 (MB)
+        PROCESS_MEMORY_COUNTERS pmc = {};
+        SIZE_T memMB = 0;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+            memMB = pmc.WorkingSetSize / (1024 * 1024);
+
+        sprintf_s(buf, sizeof(buf), "FPS %d  MEM %3zuM", (int)(currentFPS + 0.5f), memMB);
+        r.drawTextLeft(widen(buf), rx, yPos, rxW, lineH, ff, (float)fsSm, FontStyleRegular, Color(255, 160, 180, 160));
+    }
 
     // ── 速度指示（屏幕中下方） ──
     if (keyShift || keyCtrl) {
@@ -1435,8 +1510,18 @@ void Game::renderMenu(Renderer& r) {
 
     r.drawTextCentered(L"PLANE WAR", 0, 35*sc+tyOff, (float)WINDOW_WIDTH, 80*sc,
                        ff, 42*sc, FontStyleBold, Color(255,255,220,0));
-    r.drawTextCentered(L"GDI+ Edition | 60 FPS | H=Help", 0, 120*sc, (float)WINDOW_WIDTH, 20*sc,
-                       ff, 12*sc, FontStyleRegular, Color(255,150,150,150));
+
+    // 动态副标题 — 实时反映当前设置
+    {
+        wchar_t info[128];
+        swprintf_s(info, _countof(info), L"%dx%d | %dHz | %s | Skin: %s",
+                   WINDOW_WIDTH, WINDOW_HEIGHT,
+                   REFRESH_RATES[currentRefreshRate],
+                   useDirect2D ? L"D2D" : L"GDI+",
+                   SKINS[currentSkin].name);
+        r.drawTextCentered(info, 0, 120*sc, (float)WINDOW_WIDTH, 20*sc,
+                           ff, 12*sc, FontStyleRegular, Color(255,150,150,150));
+    }
 
     float lineY = 155 * sc;
     r.drawLine(WINDOW_WIDTH/2.0f-100*sc, lineY, WINDOW_WIDTH/2.0f+100*sc, lineY, Color(255,60,60,80), 1);
@@ -1473,7 +1558,7 @@ void Game::renderSettings(Renderer& r) {
     r.drawTextCentered(title, 0, 25*sc, (float)WINDOW_WIDTH, 37*sc, ff, 26*sc, FontStyleBold, Color(255,255,220,0));
 
     // 页标签栏
-    const wchar_t* pages[] = { L"Resolution", L"Refresh Rate", L"Render Options" };
+    const wchar_t* pages[] = { L"Resolution", L"Frame Cap", L"Render Options" };
     float tabY = 68 * sc, tabH = 22 * sc;
     for (int i = 0; i < 3; i++) {
         Color col = (i == settingsPage) ? Color(255,255,220,0) : Color(255,140,140,140);
@@ -1516,6 +1601,9 @@ void Game::renderSettings(Renderer& r) {
             idx++;
         }
     } else if (settingsPage == 1) {
+        // 提示：仅影响画面流畅度，不影响游戏速度
+        r.drawTextCentered(L"Frame cap: visual smoothness only  |  Game speed: Render Options page",
+                           0, contentY - 2*sc, (float)WINDOW_WIDTH, 18*sc, ff, 10*sc, FontStyleRegular, Color(255,120,120,120));
         float optStep = 32 * sc;
         for (int i = 0; i < REFRESH_RATE_COUNT; i++) {
             bool sel = (i == settingsSelection), act = (i == currentRefreshRate);
@@ -1543,6 +1631,16 @@ void Game::renderSettings(Renderer& r) {
                        optNames[i], useDirect2D ? L"Direct2D" : L"GDI+");
             r.drawTextLeft(buf, 50*sc, contentY+i*optStep, WINDOW_WIDTH-50*sc, optStep, ff, 16*sc, FontStyleRegular, col);
         }
+        // Game Speed
+        {
+            int i = d2dAvailable ? 3 : 2;
+            Color col = (i == settingsSelection) ? Color(255,255,255,140) : Color(255,185,185,185);
+            const wchar_t* speedLabels[] = { L"Slow (45)", L"Medium (60)", L"Fast (90)" };
+            wchar_t buf[80];
+            swprintf_s(buf, _countof(buf), (i == settingsSelection) ? L"> %-20s  %s" : L"   %-20s  %s",
+                       L"Game Speed", speedLabels[currentGameTick]);
+            r.drawTextLeft(buf, 50*sc, contentY + i*optStep, WINDOW_WIDTH-50*sc, optStep, ff, 16*sc, FontStyleRegular, col);
+        }
     }
 
     float hintY = contentY + 6 * 32 * sc + 10 * sc;
@@ -1559,8 +1657,17 @@ void Game::renderPauseOverlay(Renderer& r) {
     r.fillRect(0,0,(float)WINDOW_WIDTH,(float)WINDOW_HEIGHT, Color(160,0,0,0));
     float sc=(std::min)(WINDOW_HEIGHT/480.0f, 2.2f); const wchar_t* ff=L"Arial";
     renderBackBtn(r, sc, L"RESUME");
+
+    // ── 返回主菜单按钮（RESUME 下方） ──
+    float btnW = (std::max)(70.0f, 80 * sc), btnH = (std::max)(20.0f, 24 * sc);
+    float bx = WINDOW_WIDTH - btnW - (std::max)(8.0f, 12 * sc);
+    float by = (std::max)(4.0f, 8 * sc) + btnH + 4 * sc;
+    r.fillRect(bx, by, btnW, btnH, Color(220, 80, 50, 50));
+    r.drawRect(bx, by, btnW, btnH, Color(255, 255, 120, 120), 1.5f);
+    r.drawTextCentered(L"MENU", bx, by, btnW, btnH, ff, (std::max)(10.0f, 12*sc), FontStyleBold, Color(255, 255, 200, 200));
+
     r.drawTextCentered(L"PAUSED",0,120*sc,(float)WINDOW_WIDTH,60*sc,ff,30*sc,FontStyleBold,Color(255,255,220,0));
-    r.drawTextCentered(L"P = Resume    ESC = Menu",0,220*sc,(float)WINDOW_WIDTH,40*sc,ff,15*sc,FontStyleRegular,Color(255,185,185,185));
+    r.drawTextCentered(L"P = Resume    ESC / Click RESUME",0,220*sc,(float)WINDOW_WIDTH,40*sc,ff,15*sc,FontStyleRegular,Color(255,185,185,185));
 }
 
 // ========== 结束/胜利 ==========
