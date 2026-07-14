@@ -2,6 +2,8 @@
 #include <cmath>
 #include <gdiplus.h>
 
+class Renderer;  // 前向声明
+
 // ============================================================
 // 文件：GameObject.h
 // 功能：实体基类 + AABB 碰撞 + 工具函数
@@ -21,7 +23,7 @@ struct GameObject {
     float centerY() const { return y + height / 2.0f; }
 
     virtual void update() = 0;
-    virtual void render(Gdiplus::Graphics& g) const = 0;
+    virtual void render(Renderer& r) const = 0;
 };
 
 // ── AABB 碰撞 ──

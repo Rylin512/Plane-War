@@ -4,6 +4,8 @@
 #include <cwchar>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 
 // ============================================================
 // Config.h — 全局常量 / 调色板 / 多分辨率 / 自动射击
@@ -14,69 +16,85 @@
 // GAME_SCALE = 当前分辨率高度 / 480.0f (在 Game.cpp 中定义)
 extern float GAME_SCALE;
 
-// ==================== 统一调色板 ====================
+// ==================== 统一调色板（运行时可变，支持皮肤切换） ====================
 namespace Palette {
-    const Gdiplus::Color DeepSpace   (255,   2,   2,  18);
-    const Gdiplus::Color MenuTitle   (255, 255, 220,   0);
-    const Gdiplus::Color MenuSel     (255, 255, 255, 140);
-    const Gdiplus::Color MenuNormal  (255, 185, 185, 185);
-    const Gdiplus::Color MenuHint    (255, 110, 110, 110);
-
-    const Gdiplus::Color PlayerBody    (255,   0, 190, 255);
-    const Gdiplus::Color PlayerDark    (255,   0, 120, 200);
-    const Gdiplus::Color PlayerWing    (255, 190, 210, 230);
-    const Gdiplus::Color PlayerCockpit (255,   0, 248, 255);
-    const Gdiplus::Color PlayerEngine  (255, 255, 165,  20);
-    const Gdiplus::Color PlayerGlow    (255,   0, 140, 240);
-    const Gdiplus::Color PlayerFastGlow(255,   0, 255, 140);
-    const Gdiplus::Color PlayerSlowGlow(255, 100, 180, 255);
-
-    const Gdiplus::Color EnemyNormal     (255, 225,  38,  38);
-    const Gdiplus::Color EnemyNormalDark (255, 160,  18,  18);
-    const Gdiplus::Color EnemyFast       (255, 255, 165,   0);
-    const Gdiplus::Color EnemyFastDark   (255, 200, 120,   0);
-    const Gdiplus::Color EnemyShooting   (255, 165,  38, 225);
-    const Gdiplus::Color EnemyShootingLit(255, 225, 105, 255);
-
-    const Gdiplus::Color BossPhase1     (255, 185, 22,  22);
-    const Gdiplus::Color BossPhase1Dark (255, 110, 10,  10);
-    const Gdiplus::Color BossPhase2     (255, 235, 85,  15);
-    const Gdiplus::Color BossPhase2Dark (255, 150, 50,   8);
-    const Gdiplus::Color BossPhase3     (255, 255, 20,  20);
-    const Gdiplus::Color BossPhase3Dark (255, 170, 10,  10);
-    const Gdiplus::Color BossCockpit    (255,   0, 210, 255);
-
-    const Gdiplus::Color BulletPlayer    (255, 255, 255,  60);
-    const Gdiplus::Color BulletPlayerCore(255, 255, 255, 210);
-    const Gdiplus::Color BulletEnemy     (255, 255,  45,  45);
-    const Gdiplus::Color BulletEnemyCore (255, 255, 160, 160);
-
-    const Gdiplus::Color ItemFirepower(255, 255, 205, 0);
-    const Gdiplus::Color ItemHealth   (255, 255,  55, 55);
-    const Gdiplus::Color ItemBomb     (255, 255, 125,  0);
-    const Gdiplus::Color ItemShield   (255,   0, 155, 255);
-
-    const Gdiplus::Color ParticleExplosion(255, 255, 105, 25);
-    const Gdiplus::Color ParticleBomb     (255, 255, 255, 210);
+    extern Gdiplus::Color DeepSpace, MenuTitle, MenuSel, MenuNormal, MenuHint;
+    extern Gdiplus::Color PlayerBody, PlayerDark, PlayerWing, PlayerCockpit, PlayerEngine, PlayerGlow, PlayerFastGlow, PlayerSlowGlow;
+    extern Gdiplus::Color EnemyNormal, EnemyNormalDark, EnemyFast, EnemyFastDark, EnemyShooting, EnemyShootingLit;
+    extern Gdiplus::Color BossPhase1, BossPhase1Dark, BossPhase2, BossPhase2Dark, BossPhase3, BossPhase3Dark, BossCockpit;
+    extern Gdiplus::Color BulletPlayer, BulletPlayerCore, BulletEnemy, BulletEnemyCore;
+    extern Gdiplus::Color ItemFirepower, ItemHealth, ItemBomb, ItemShield;
+    extern Gdiplus::Color ParticleExplosion, ParticleBomb;
 }
+
+// 皮肤预设
+struct SkinColors {
+    const wchar_t* name;
+    Gdiplus::Color playerBody, playerDark, playerWing, playerCockpit, playerEngine, playerGlow, playerFastGlow, playerSlowGlow;
+    Gdiplus::Color enemyNormal, enemyNormalDark, enemyFast, enemyFastDark, enemyShooting, enemyShootingLit;
+    Gdiplus::Color bossP1, bossP1D, bossP2, bossP2D, bossP3, bossP3D, bossCockpit;
+    Gdiplus::Color bulletPlayer, bulletPlayerCore, bulletEnemy, bulletEnemyCore;
+    Gdiplus::Color itemFire, itemHealth, itemBomb, itemShield;
+    Gdiplus::Color particleExplosion, particleBomb;
+};
+
+extern SkinColors SKINS[];
+extern int SKIN_COUNT;
+void applySkin(int idx);  // 将皮肤颜色复制到 Palette
 
 // ==================== 窗口 ====================
 extern int WINDOW_WIDTH;
 extern int WINDOW_HEIGHT;
 static constexpr int FRAME_INTERVAL   = 16;
 static constexpr int LOGIC_HZ         = 60;
-static constexpr double TARGET_FRAME_TIME = 1.0 / 60.0;
+extern double TARGET_FRAME_TIME;  // 由刷新率设置动态调整
 
-struct Resolution { int width, height; const char* label; bool fullscreen; };
-static const Resolution RESOLUTIONS[] = {
-    {  640,  480, "640x480    (VGA)",       false },
-    {  800,  600, "800x600    (SVGA)",      false },
-    { 1024,  768, "1024x768   (XGA)",       false },
-    { 1280,  720, "1280x720   (HD)",        false },
-    { 1920, 1080, "1920x1080  (Full HD)",   true  },
-    { 2560, 1440, "2560x1440  (2K QHD)",    true  },
+// 刷新率预设
+static constexpr int REFRESH_RATES[]  = { 60, 75, 120, 144, 165, 240 };
+static constexpr int REFRESH_RATE_COUNT = 6;
+static constexpr int DEFAULT_REFRESH_RATE = 0;  // 60Hz
+
+// 宽高比分类
+enum AspectRatio { AR_4_3, AR_16_9, AR_16_10, AR_21_9, AR_32_9, AR_COUNT };
+
+struct Resolution {
+    int width, height;
+    const char* label;
+    bool fullscreen;
+    AspectRatio aspect;
 };
-static constexpr int RESOLUTION_COUNT = 6;
+
+static const Resolution RESOLUTIONS[] = {
+    // 4:3
+    {   640,  480,  "640x480    (VGA)",        false, AR_4_3  },
+    {   800,  600,  "800x600    (SVGA)",       false, AR_4_3  },
+    {  1024,  768,  "1024x768   (XGA)",        false, AR_4_3  },
+    {  1280,  960,  "1280x960   (SXGA)",       false, AR_4_3  },
+    {  1400, 1050,  "1400x1050  (SXGA+)",      false, AR_4_3  },
+    // 16:9
+    {  1280,  720,  "1280x720   (HD)",         false, AR_16_9 },
+    {  1366,  768,  "1366x768   (WXGA)",       false, AR_16_9 },
+    {  1600,  900,  "1600x900   (HD+)",        false, AR_16_9 },
+    {  1920, 1080,  "1920x1080  (Full HD)",    true,  AR_16_9 },
+    {  2560, 1440,  "2560x1440  (2K QHD)",     true,  AR_16_9 },
+    {  3840, 2160,  "3840x2160  (4K UHD)",     true,  AR_16_9 },
+    // 16:10
+    {  1280,  800,  "1280x800   (WXGA)",       false, AR_16_10 },
+    {  1440,  900,  "1440x900   (WXGA+)",      false, AR_16_10 },
+    {  1680, 1050,  "1680x1050  (WSXGA+)",     false, AR_16_10 },
+    {  1920, 1200,  "1920x1200  (WUXGA)",      false, AR_16_10 },
+    {  2560, 1600,  "2560x1600  (WQXGA)",      true,  AR_16_10 },
+    // 21:9
+    {  2560, 1080,  "2560x1080  (UWHD)",       true,  AR_21_9  },
+    {  3440, 1440,  "3440x1440  (UWQHD)",      true,  AR_21_9  },
+    // 32:9
+    {  3840, 1080,  "3840x1080  (DFHD)",       true,  AR_32_9  },
+    {  5120, 1440,  "5120x1440  (DQHD)",       true,  AR_32_9  },
+};
+static constexpr int RESOLUTION_COUNT = 20;
+
+// 宽高比标签
+static const char* ASPECT_LABELS[] = { "4:3", "16:9", "16:10", "21:9", "32:9" };
 
 // ==================== 背景 ====================
 extern int BG_ALPHA;  // 0=全黑 255=原始 (默认75)

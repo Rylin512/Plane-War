@@ -16,7 +16,7 @@ public:
     Player();
 
     void update() override;
-    void render(Gdiplus::Graphics& g) const override;
+    void render(Renderer& r) const override;
 
     void move(float dx, float dy);
     void clampToScreen();
