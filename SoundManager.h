@@ -30,6 +30,12 @@ public:
     void playHit();
     void playExplosion();
 
+    // 音量控制
+    void setVolume(int percent);   // 0-100, 默认 50
+    int  getVolume() const;
+    void setMute(bool mute);
+    bool isMuted() const;
+
     // 健康检查（主线程每帧调用，检测音频线程是否卡死）
     bool isAudioHealthy() const;
     void resetAudioDevice();  // 紧急恢复：重置 waveOut 设备
@@ -81,11 +87,19 @@ private:
     LONG m_queueHead = 0;
     LONG m_queueTail = 0;
 
+    // 优先级：爆炸/受击跳过积压的射击音效
+    volatile LONG m_skipShoots = 0;   // 1=跳过所有待处理射击音效
+    volatile LONG m_maxShoots  = 1;   // 队列中最多保留的射击音效数
+
     // ── 健康追踪 ──
     volatile LONG m_lastCallbackTick = 0;   // 最后一次 WOM_DONE 回调时间
     volatile LONG m_lastWriteTick    = 0;   // 最后一次 waveOutWrite 完成时间
     volatile LONG m_consecutiveErrors = 0;  // 连续错误计数
     volatile bool m_deviceOk         = true; // 设备是否健康
+
+    // ── 音量 ──
+    int  m_volume = 50;       // 0-100
+    bool m_muted  = false;
 
     bool m_initialized = false;
 };
