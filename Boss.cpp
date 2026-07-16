@@ -105,11 +105,11 @@ void Boss::render(Renderer& r) const {
         }
     }
 
-    // 阴影 / 主体
-    PointF body[8]={{cx,y},{cx-30*s,y+15*s},{cx-35*s,y+25*s},{cx-25*s,y+55*s},{cx+25*s,y+55*s},{cx+35*s,y+25*s},{cx+30*s,y+15*s}};
-    r.fillPolygon(body,8,darkC);
-    r.fillPolygon(body,8,bodyC);
-    r.drawPolygon(body,8,darkC,2*s);
+    // 阴影 / 主体（7顶点多边形，GDI+ 自动闭合）
+    PointF body[7]={{cx,y},{cx-30*s,y+15*s},{cx-35*s,y+25*s},{cx-25*s,y+55*s},{cx+25*s,y+55*s},{cx+35*s,y+25*s},{cx+30*s,y+15*s}};
+    r.fillPolygon(body,7,darkC);
+    r.fillPolygon(body,7,bodyC);
+    r.drawPolygon(body,7,darkC,2*s);
 
     // 机翼
     PointF lw[5]={{cx-30*s,cy-5*s},{cx-70*s,cy},{cx-65*s,cy+20*s},{cx-35*s,cy+15*s},{cx-30*s,cy-5*s}};
