@@ -290,7 +290,7 @@ LRESULT CALLBACK Game::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             g_game->state = GameState::PAUSED;
         return 0;
     }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 // ========== 构造 / 析构 ==========
@@ -336,17 +336,17 @@ Game::~Game() { shutdown(); }
 // ========== 窗口创建 ==========
 
 bool Game::createWindow(HINSTANCE hInst) {
-    WNDCLASSA wc = {};
+    WNDCLASSW wc = {};
     wc.lpfnWndProc = WndProc; wc.hInstance = hInst;
-    wc.lpszClassName = "PlaneWarGDI+";
+    wc.lpszClassName = L"PlaneWarGDI+";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.style = CS_HREDRAW | CS_VREDRAW;
-    if (!RegisterClassA(&wc)) return false;
+    if (!RegisterClassW(&wc)) return false;
 
     RECT rc = {0,0,WINDOW_WIDTH,WINDOW_HEIGHT};
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, FALSE);
-    hwnd = CreateWindowExA(0, "PlaneWarGDI+", "Plane War — GDI+ Edition",
+    hwnd = CreateWindowExW(0, L"PlaneWarGDI+", L"Plane War",
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, rc.right-rc.left, rc.bottom-rc.top,
         nullptr, nullptr, hInst, nullptr);
@@ -756,9 +756,9 @@ void Game::run() {
     bool shouldExit = false;
 
     while (!shouldExit) {
-        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { hwnd = nullptr; return; }
-            TranslateMessage(&msg); DispatchMessage(&msg);
+            TranslateMessage(&msg); DispatchMessageW(&msg);
         }
         if (!hwnd) break;
 
@@ -901,7 +901,7 @@ void Game::handleInput() {
 
         // 翻页（仅 Tab 键）
         bool tab = (GetAsyncKeyState(VK_TAB)&0x8000)!=0;
-        if (tab) { settingsPage=(settingsPage+1)%3; settingsSelection=0; menuCooldown=10; }
+        if (tab) { settingsPage=(settingsPage+1)%4; settingsSelection=0; menuCooldown=10; }
 
         // 当前页操作
         if (settingsPage == 0) {  // 分辨率（宽高比子导航）
@@ -934,7 +934,7 @@ void Game::handleInput() {
                 TARGET_FRAME_TIME = 1.0 / REFRESH_RATES[currentRefreshRate];
                 menuCooldown = 15;
             }
-        } else {  // 渲染选项
+        } else if (settingsPage == 2) {  // 渲染选项
             int optCount = d2dAvailable ? 4 : 3;
             if (up)   { settingsSelection=(settingsSelection-1+optCount)%optCount; menuCooldown=8; }
             if (dn)   { settingsSelection=(settingsSelection+1)%optCount; menuCooldown=8; }
@@ -944,6 +944,25 @@ void Game::handleInput() {
                 else if (settingsSelection == 2) { useDirect2D = !useDirect2D; recreateRenderer(); }
                 else if (settingsSelection == 3) { currentGameTick = (currentGameTick + 1) % TICK_RATE_COUNT; }
                 menuCooldown = 12;
+            }
+        } else if (settingsPage == 3) {  // 音频设置
+            SoundManager& snd = SoundManager::instance();
+            int optCount = 2;  // Sound On/Off, Volume
+            if (up)   { settingsSelection=(settingsSelection-1+optCount)%optCount; menuCooldown=8; }
+            if (dn)   { settingsSelection=(settingsSelection+1)%optCount; menuCooldown=8; }
+            if (enter || left || right) {
+                menuCooldown = 10;
+                if (settingsSelection == 0) {
+                    // 音效开关
+                    if (enter) snd.setMute(!snd.isMuted());
+                } else if (settingsSelection == 1) {
+                    // 音量调节
+                    int vol = snd.getVolume();
+                    if (left)  vol = (std::max)(0,  vol - 5);
+                    if (right) vol = (std::min)(100, vol + 5);
+                    if (enter) vol = 50;  // Enter 恢复默认
+                    snd.setVolume(vol);
+                }
             }
         }
         if (esc) { settingsPage=0; settingsSelection=0; state=GameState::MENU; menuCooldown=15; }
@@ -1087,14 +1106,14 @@ void Game::handleInput() {
     if (state == GameState::SETTINGS) {
         float sc = (std::min)(WINDOW_HEIGHT / 480.0f, 2.2f);
         if (clickBackBtn(mx, my, sc)) { state = GameState::MENU; return; }
-        // 点击页标签（左侧竖排）
+        // 点击页标签
         float tabY = 68 * sc, tabH = 22 * sc;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             if (clickIn(mx, my, 0, tabY + i * tabH, (float)WINDOW_WIDTH, tabH)) {
                 settingsPage = i; settingsSelection = 0; menuCooldown = 10; return;
             }
         }
-        float sepY = tabY + 3 * tabH + 2 * sc;
+        float sepY = tabY + 4 * tabH + 2 * sc;
         float contentY = sepY + 8 * sc;
         if (settingsPage == 0) {
             // 宽高比标签
@@ -1121,12 +1140,28 @@ void Game::handleInput() {
                     currentRefreshRate = i; TARGET_FRAME_TIME = 1.0 / REFRESH_RATES[i]; menuCooldown = 15; return;
                 }
             }
-        } else {
+        } else if (settingsPage == 2) {
             float optStep = 32 * sc;
             if (clickIn(mx, my, 50 * sc, contentY, WINDOW_WIDTH - 50 * sc, optStep)) { antiAlias = !antiAlias; menuCooldown = 12; return; }
             if (clickIn(mx, my, 50 * sc, contentY + optStep, WINDOW_WIDTH - 50 * sc, optStep)) { perfMode = !perfMode; menuCooldown = 12; return; }
             if (d2dAvailable && clickIn(mx, my, 50 * sc, contentY + 2 * optStep, WINDOW_WIDTH - 50 * sc, optStep)) { useDirect2D = !useDirect2D; recreateRenderer(); menuCooldown = 12; return; }
             if (clickIn(mx, my, 50 * sc, contentY + 3 * optStep, WINDOW_WIDTH - 50 * sc, optStep)) { currentGameTick = (currentGameTick + 1) % TICK_RATE_COUNT; menuCooldown = 12; return; }
+        } else if (settingsPage == 3) {
+            // 音频页点击
+            SoundManager& snd = SoundManager::instance();
+            float optY = contentY + 30 * sc, optStep = 32 * sc;
+            if (clickIn(mx, my, 50 * sc, optY, WINDOW_WIDTH - 50 * sc, optStep)) {
+                settingsSelection = 0; snd.setMute(!snd.isMuted()); menuCooldown = 10; return;
+            }
+            // 音量滑块条点击
+            float barX = 50 * sc + 180 * sc, barY = optY + optStep + 6 * sc;
+            float barW = 200 * sc, barH = 12 * sc;
+            if (clickIn(mx, my, barX, barY, barW, barH)) {
+                settingsSelection = 1;
+                int pct = (int)((mx - barX) / barW * 100.0f + 0.5f);
+                if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+                snd.setVolume(pct); menuCooldown = 10; return;
+            }
         }
     }
 
@@ -1981,9 +2016,10 @@ void Game::renderHUD(Renderer& r) {
 
     // ── 速度指示（屏幕中下方） ──
     if (keyShift || keyCtrl) {
-        float midX = WINDOW_WIDTH / 2.0f;
-        r.drawTextCentered(widen(keyShift ? "SPEED" : "SLOW"), midX - 50, WINDOW_HEIGHT - lineH * 2.5f,
-                           100.0f, lineH, ff, (float)fs, FontStyleBold,
+        float speedW = 160 * sc;  // 足够宽以防换行
+        r.drawTextCentered(widen(keyShift ? "SPEED" : "SLOW"),
+                           WINDOW_WIDTH / 2.0f - speedW / 2.0f, WINDOW_HEIGHT - lineH * 2.5f,
+                           speedW, lineH, ff, (float)fs, FontStyleBold,
                            keyShift ? Color(255, 0, 255, 100) : Color(255, 100, 200, 255));
     }
 
@@ -2060,13 +2096,13 @@ void Game::renderSettings(Renderer& r) {
 
     // 标题 + 页码
     wchar_t title[64];
-    swprintf_s(title, _countof(title), L"SETTINGS  [Page %d/3]", settingsPage + 1);
+    swprintf_s(title, _countof(title), L"SETTINGS  [Page %d/4]", settingsPage + 1);
     r.drawTextCentered(title, 0, 25*sc, (float)WINDOW_WIDTH, 37*sc, ff, 26*sc, FontStyleBold, Color(255,255,220,0));
 
     // 页标签栏
-    const wchar_t* pages[] = { L"Resolution", L"Frame Cap", L"Render Options" };
+    const wchar_t* pages[] = { L"Resolution", L"Frame Cap", L"Render", L"Audio" };
     float tabY = 68 * sc, tabH = 22 * sc;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         Color col = (i == settingsPage) ? Color(255,255,220,0) : Color(255,140,140,140);
         wchar_t tab[32];
         swprintf_s(tab, _countof(tab), i == settingsPage ? L"< %s >" : L"  %s", pages[i]);
@@ -2074,7 +2110,7 @@ void Game::renderSettings(Renderer& r) {
     }
 
     // 分隔线
-    float sepY = tabY + 3 * tabH + 2 * sc;
+    float sepY = tabY + 4 * tabH + 2 * sc;
     r.drawLine(40*sc, sepY, WINDOW_WIDTH-40*sc, sepY, Color(255,60,60,80), 1);
 
     float contentY = sepY + 8 * sc;
@@ -2119,7 +2155,7 @@ void Game::renderSettings(Renderer& r) {
             if (act) wcscat(buf, L"  [ACTIVE]");
             r.drawTextLeft(buf, 50*sc, contentY+i*optStep, WINDOW_WIDTH-50*sc, optStep, ff, 16*sc, FontStyleRegular, col);
         }
-    } else {
+    } else if (settingsPage == 2) {
         const wchar_t* optNames[] = { L"Anti-Alias", L"Performance Mode", L"Render Backend" };
         float optStep = 32 * sc;
         for (int i = 0; i < 2; i++) {
@@ -2147,12 +2183,56 @@ void Game::renderSettings(Renderer& r) {
                        L"Game Speed", speedLabels[currentGameTick]);
             r.drawTextLeft(buf, 50*sc, contentY + i*optStep, WINDOW_WIDTH-50*sc, optStep, ff, 16*sc, FontStyleRegular, col);
         }
+    } else if (settingsPage == 3) {
+        // ── 音频设置 ──
+        SoundManager& snd = SoundManager::instance();
+        int vol = snd.getVolume();
+        bool muted = snd.isMuted();
+
+        r.drawTextCentered(L"Sound Effects", 0, contentY, (float)WINDOW_WIDTH, 24 * sc, ff, 16 * sc, FontStyleBold, Color(255, 220, 220, 200));
+
+        // 音效开关
+        float optY = contentY + 30 * sc, optStep = 32 * sc;
+        {
+            bool sel = (settingsSelection == 0);
+            Color col = sel ? Color(255, 255, 255, 140) : Color(255, 185, 185, 185);
+            wchar_t buf[80];
+            swprintf_s(buf, _countof(buf), sel ? L"> Sound: %s" : L"   Sound: %s", muted ? L"OFF" : L"ON");
+            r.drawTextLeft(buf, 50 * sc, optY, WINDOW_WIDTH - 50 * sc, optStep, ff, 16 * sc, FontStyleRegular, col);
+        }
+
+        // 音量滑块
+        optY += optStep;
+        {
+            bool sel = (settingsSelection == 1);
+            Color col = sel ? Color(255, 255, 255, 140) : Color(255, 185, 185, 185);
+
+            // 标签
+            wchar_t buf[64];
+            swprintf_s(buf, _countof(buf), sel ? L"> Volume: %d%%" : L"   Volume: %d%%", vol);
+            r.drawTextLeft(buf, 50 * sc, optY, WINDOW_WIDTH - 50 * sc, optStep, ff, 16 * sc, FontStyleRegular, col);
+
+            // 滑块背景条
+            float barX = 50 * sc + 180 * sc, barY = optY + 6 * sc;
+            float barW = 200 * sc, barH = 12 * sc;
+            r.fillRect(barX, barY, barW, barH, Color(255, 50, 50, 50));
+            r.drawRect(barX, barY, barW, barH, Color(255, 120, 120, 120), 1);
+
+            // 填充条
+            if (vol > 0) {
+                r.fillRect(barX + 2, barY + 2, (barW - 4) * vol / 100.0f, barH - 4, Color(255, 0, 200, 100));
+            }
+
+            // 滑块游标位置线
+            float cursorX = barX + barW * vol / 100.0f;
+            r.drawLine(cursorX, barY - 2, cursorX, barY + barH + 2, Color(255, 255, 255, 220), 2);
+        }
     }
 
     float hintY = contentY + 6 * 32 * sc + 10 * sc;
     if (hintY > WINDOW_HEIGHT - 26 * sc) hintY = WINDOW_HEIGHT - 26 * sc;
-    r.drawTextCentered(settingsPage == 2 ?
-        L"Arrows=Select  Enter=Toggle  Tab=Next Page  ESC=Back" :
+    r.drawTextCentered(settingsPage >= 2 ?
+        L"Arrows=Select  Enter=Toggle  Left/Right=Adjust  Tab=Next Page  ESC=Back" :
         L"Arrows=Select  Enter=Apply  Tab=Next Page  ESC=Back",
         0, hintY, (float)WINDOW_WIDTH, 20*sc, ff, 11*sc, FontStyleRegular, Color(255,110,110,110));
 }

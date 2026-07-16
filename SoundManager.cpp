@@ -153,17 +153,26 @@ DWORD WINAPI SoundManager::audioThreadProc(LPVOID param) {
 
         // ── 处理待写入队列 ──
         if (r == WAIT_OBJECT_0 || r == WAIT_TIMEOUT) {
+            LONG skip = self->m_skipShoots;
             while (self->m_queueHead != self->m_queueTail) {
                 LONG tail = self->m_queueTail;
                 int type = self->m_queue[tail];
-                self->m_queueTail = (tail + 1) % MAX_QUEUE;
 
+                // 优先级处理：如果 m_skipShoots 置位，跳过所有射击音效
+                if (skip && type == 0) {
+                    self->m_queueTail = (tail + 1) % MAX_QUEUE;
+                    continue;
+                }
+
+                self->m_queueTail = (tail + 1) % MAX_QUEUE;
                 const std::vector<BYTE>* wav = nullptr;
                 if (type == 0) wav = &self->m_shootWav;
                 else if (type == 1) wav = &self->m_hitWav;
                 else if (type == 2) wav = &self->m_explosionWav;
                 if (wav) self->writeWav(*wav);
             }
+            // 处理完毕，清除跳过标志
+            if (skip) InterlockedExchange(&self->m_skipShoots, 0);
         }
 
         // ── 清理已完成的 header（回调标记的） ──
@@ -226,13 +235,41 @@ void SoundManager::playWav(const std::vector<BYTE>& wavData) {
     else if (&wavData == &m_explosionWav) type = 2;
     if (type < 0) return;
 
+    // 优先级处理：
+    // - 射击音效(0)：限制积压数量，超过则丢弃
+    // - 受击/爆炸(1/2)：标记跳过所有积压的射击音效，确保即时播放
+    if (type == 0) {
+        // 统计队列中已有的射击音效数量
+        LONG head = m_queueHead, tail = m_queueTail;
+        int shootCount = 0;
+        while (tail != head) {
+            if (m_queue[tail] == 0) shootCount++;
+            tail = (tail + 1) % MAX_QUEUE;
+        }
+        if (shootCount >= m_maxShoots) return;  // 已积压足够多，丢弃
+    } else {
+        // 爆炸/受击：标记跳过积压射击音效
+        InterlockedExchange(&m_skipShoots, 1);
+    }
+
     LONG head = m_queueHead;
     LONG next = (head + 1) % MAX_QUEUE;
-    if (next == m_queueTail) return;
+    if (next == m_queueTail) return;  // 队列满
     m_queue[head] = type;
     InterlockedExchange(&m_queueHead, next);
     SetEvent(m_hWakeEvent);
 }
+
+// ========== 音量控制 ==========
+
+void SoundManager::setVolume(int percent) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    m_volume = percent;
+}
+int  SoundManager::getVolume() const  { return m_volume; }
+void SoundManager::setMute(bool mute) { m_muted = mute; }
+bool SoundManager::isMuted() const    { return m_muted; }
 
 // ========== 健康检查（主线程调用） ==========
 
@@ -270,6 +307,7 @@ void SoundManager::resetAudioDevice() {
 
 void SoundManager::writeWav(const std::vector<BYTE>& wavData) {
     if (!m_hWaveOut || wavData.empty()) return;
+    if (m_muted) return;
 
     EnterCriticalSection(&m_cs);
     if ((int)m_activeHeaders.size() >= MAX_ACTIVE_SOUNDS) {
@@ -281,6 +319,17 @@ void SoundManager::writeWav(const std::vector<BYTE>& wavData) {
     DWORD ds = (DWORD)wavData.size();
     char* dc = new char[ds];
     memcpy(dc, wavData.data(), ds);
+
+    // 音量缩放：修改 16-bit PCM 采样值（跳过 44 字节 WAV 头）
+    if (m_volume != 100 && ds > 44) {
+        float scale = m_volume / 100.0f;
+        short* samples = (short*)(dc + 44);
+        int sampleCount = ((int)ds - 44) / (int)sizeof(short);
+        for (int i = 0; i < sampleCount; i++) {
+            samples[i] = (short)(samples[i] * scale);
+        }
+    }
+
     hdr->lpData = dc; hdr->dwBufferLength = ds;
 
     MMRESULT res = waveOutPrepareHeader(m_hWaveOut, hdr, sizeof(WAVEHDR));
