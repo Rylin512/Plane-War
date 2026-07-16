@@ -44,7 +44,7 @@ struct Particle {
 enum class GameState {
     MENU, SETTINGS, PLAYING, PAUSED,
     LEVEL_TRANSITION, GAME_OVER, VICTORY,
-    LEADERBOARD, NAME_ENTRY, HELP, SKIN_SELECT
+    LEADERBOARD, NAME_ENTRY, HELP, SKIN_SELECT, CHEAT_MENU
 };
 
 enum class MenuOption { START_GAME, LEADERBOARD, SETTINGS_MENU, SKIN, EXIT, COUNT };
@@ -63,6 +63,7 @@ public:
     void run();
     void shutdown();
     void resetGame();
+    void crashRecover();  // 崩溃后安全恢复到主菜单
 
 private:
     // ── 窗口 ──
@@ -105,6 +106,7 @@ private:
     void renderLevelTransition(Renderer& r);
     void renderHelp(Renderer& r);
     void renderSkinSelect(Renderer& r);
+    void renderCheatMenu(Renderer& r);
 
     // ── 辅助 ──
     void renderTiledBG(Renderer& r, Gdiplus::Image* img);
@@ -153,6 +155,7 @@ public:
     bool keySpace, keyBomb, keyPause, keyShift, keyCtrl, keyHelp;
     bool spacePressed;            // 保留用于特殊操作
     int  frameCount;
+    float currentFPS;            // 平滑帧率（崩溃日志需要）
 
     // 鼠标
     float mouseX, mouseY;
@@ -179,6 +182,11 @@ public:
     // 分数
     int score, highScore;
 
+    // ── 作弊/调试选项 ──
+    bool godMode;           // 无敌模式
+    bool oneHitKill;        // 一击必杀（含Boss）
+    int  cheatSelection;    // 作弊菜单当前选项
+
     // 对象容器
     Player* player;
     std::vector<Enemy*>    enemies;
@@ -199,12 +207,38 @@ public:
     EnemyBullet*  acquireEnemyBullet(float x, float y, float angleX = 0);
     void releaseBullet(Bullet* b);
 
+    // 看门狗心跳
+    void initHeartbeat();
+    void updateHeartbeat();
+    void closeHeartbeat();
+
 private:
+    // ── 心跳共享内存 ──
+    HANDLE m_hHeartbeatMap;
+    struct HeartbeatData {
+        volatile LONG frameCount;
+        volatile LONG lastTick;
+        DWORD processId;
+        DWORD gameState;
+        DWORD currentLevel;
+        DWORD score;
+        DWORD enemyCount;
+        DWORD bulletCount;
+        DWORD itemCount;
+        DWORD godMode;
+        DWORD oneHitKill;
+        float currentFPS;
+        DWORD resolutionW;
+        DWORD resolutionH;
+        char  reserved[32];
+    }* m_pHeartbeat;
+
     // ── QPC ──
     LARGE_INTEGER qpcFreq, qpcPrev;
     double deltaTime;
     int    menuCooldown;
-    float  currentFPS;       // 性能监视器：平滑帧率
+    SIZE_T cachedMemMB;       // 缓存内存占用，每 N 帧更新一次
+    int    memUpdateCounter;  // 内存更新帧计数器
 
     // ── 持久化渲染资源 (避免每帧分配) ──
     // 后台缓冲
