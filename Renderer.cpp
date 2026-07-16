@@ -1,10 +1,11 @@
 #include "Renderer.h"
 #include <map>
+#include <string>
 using namespace Gdiplus;
 
 // ============================================================
 // GdiplusRenderer — 封装现有 GDI+ 调用到 Renderer 接口
-// 内置画刷/画笔缓存，避免每帧分配
+// 内置画刷/画笔/字体缓存，避免每帧分配
 // ============================================================
 
 class GdiplusRenderer : public Renderer {
@@ -17,6 +18,19 @@ private:
     std::map<DWORD, SolidBrush*> brushCache;
     // 画笔缓存 (ARGB + width key -> Pen*)
     std::map<DWORD, Pen*> penCache;
+    // 字体缓存 key
+    struct FontKey {
+        std::wstring family;
+        float size;
+        int style;
+        bool operator<(const FontKey& o) const {
+            if (family != o.family) return family < o.family;
+            if (size != o.size) return size < o.size;
+            return style < o.style;
+        }
+    };
+    std::map<std::wstring, FontFamily*> fontFamilyCache;
+    std::map<FontKey, Font*> fontCache;
 
     SolidBrush* getBrush(Color c) {
         DWORD k = c.GetValue();
@@ -36,11 +50,39 @@ private:
         return p;
     }
 
+    Font* getFont(const wchar_t* family, float size, int style) {
+        FontKey key{family, size, style};
+        auto it = fontCache.find(key);
+        if (it != fontCache.end()) return it->second;
+
+        // 获取或创建 FontFamily（Font 依赖它存活）
+        FontFamily* ff = nullptr;
+        auto ffIt = fontFamilyCache.find(family);
+        if (ffIt != fontFamilyCache.end()) {
+            ff = ffIt->second;
+        } else {
+            ff = new FontFamily(family);
+            if (!ff->IsAvailable()) {
+                delete ff;
+                ff = new FontFamily(L"Arial");
+            }
+            fontFamilyCache[family] = ff;
+        }
+
+        Font* f = new Font(ff, size, style, UnitPixel);
+        fontCache[key] = f;
+        return f;
+    }
+
     void clearCaches() {
         for (auto& kv : brushCache) delete kv.second;
         for (auto& kv : penCache) delete kv.second;
+        for (auto& kv : fontCache) delete kv.second;
+        for (auto& kv : fontFamilyCache) delete kv.second;
         brushCache.clear();
         penCache.clear();
+        fontCache.clear();
+        fontFamilyCache.clear();
     }
 
 public:
@@ -103,33 +145,30 @@ public:
     void drawText(const wchar_t* text, float x, float y,
                   const wchar_t* family, float size, int style, Color c) override {
         if (!g) return;
-        FontFamily ff(family);
-        Font f(&ff, size, style, UnitPixel);
-        g->DrawString(text, -1, &f, PointF(x, y), getBrush(c));
+        Font* f = getFont(family, size, style);
+        g->DrawString(text, -1, f, PointF(x, y), getBrush(c));
     }
 
     void drawTextCentered(const wchar_t* text, float x, float y, float rw, float rh,
                           const wchar_t* family, float size, int style, Color c) override {
         if (!g) return;
-        FontFamily ff(family);
-        Font f(&ff, size, style, UnitPixel);
+        Font* f = getFont(family, size, style);
         StringFormat sf;
         sf.SetAlignment(StringAlignmentCenter);
         sf.SetLineAlignment(StringAlignmentCenter);
         RectF rc(x, y, rw, rh);
-        g->DrawString(text, -1, &f, rc, &sf, getBrush(c));
+        g->DrawString(text, -1, f, rc, &sf, getBrush(c));
     }
 
     void drawTextLeft(const wchar_t* text, float x, float y, float rw, float rh,
                       const wchar_t* family, float size, int style, Color c) override {
         if (!g) return;
-        FontFamily ff(family);
-        Font f(&ff, size, style, UnitPixel);
+        Font* f = getFont(family, size, style);
         StringFormat sf;
         sf.SetAlignment(StringAlignmentNear);
         sf.SetLineAlignment(StringAlignmentCenter);
         RectF rc(x, y, rw, rh);
-        g->DrawString(text, -1, &f, rc, &sf, getBrush(c));
+        g->DrawString(text, -1, f, rc, &sf, getBrush(c));
     }
 
     void* getNative() override { return g; }

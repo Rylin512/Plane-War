@@ -5,6 +5,7 @@
 #include "Bullet.h"
 #include "Item.h"
 #include "Resource.h"
+#include "SoundManager.h"
 #ifndef __MINGW32__
 #include "D2DRenderer.h"
 #endif
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cwchar>
 #include <algorithm>
+#include <ctime>
 
 // MinGW: windows.h 定义了 max/min 宏，干扰 std::max/min
 #undef max
@@ -97,6 +99,153 @@ void applySkin(int idx) {
 
 static Game* g_game = nullptr;
 
+// ========== 崩溃处理 ==========
+
+// 将异常代码转为可读字符串
+static const char* exceptionName(DWORD code) {
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:         return "Access Violation";
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:    return "Array Bounds Exceeded";
+    case EXCEPTION_BREAKPOINT:               return "Breakpoint";
+    case EXCEPTION_DATATYPE_MISALIGNMENT:    return "Datatype Misalignment";
+    case EXCEPTION_FLT_DENORMAL_OPERAND:     return "Float Denormal Operand";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:       return "Float Divide by Zero";
+    case EXCEPTION_FLT_INEXACT_RESULT:       return "Float Inexact Result";
+    case EXCEPTION_FLT_INVALID_OPERATION:    return "Float Invalid Operation";
+    case EXCEPTION_FLT_OVERFLOW:             return "Float Overflow";
+    case EXCEPTION_FLT_STACK_CHECK:          return "Float Stack Check";
+    case EXCEPTION_FLT_UNDERFLOW:            return "Float Underflow";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:      return "Illegal Instruction";
+    case EXCEPTION_IN_PAGE_ERROR:            return "In Page Error";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:       return "Integer Divide by Zero";
+    case EXCEPTION_INT_OVERFLOW:             return "Integer Overflow";
+    case EXCEPTION_INVALID_DISPOSITION:      return "Invalid Disposition";
+    case EXCEPTION_NONCONTINUABLE_EXCEPTION: return "Non-Continuable";
+    case EXCEPTION_PRIV_INSTRUCTION:         return "Privileged Instruction";
+    case EXCEPTION_SINGLE_STEP:              return "Single Step";
+    case EXCEPTION_STACK_OVERFLOW:           return "Stack Overflow";
+    default:                                 return "Unknown Exception";
+    }
+}
+
+static void writeCrashLog(EXCEPTION_POINTERS* pExceptionInfo) {
+    char path[MAX_PATH];
+    GetModuleFileNameA(nullptr, path, MAX_PATH);
+    char* sl = strrchr(path, '\\');
+    if (sl) *(sl + 1) = '\0';
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char filename[MAX_PATH];
+    sprintf_s(filename, sizeof(filename), "%scrash_%04d%02d%02d_%02d%02d%02d.log",
+              path, st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    FILE* f = nullptr;
+    fopen_s(&f, filename, "w");
+    if (!f) return;
+
+    fprintf(f, "============================================\n");
+    fprintf(f, "  Plane War - Crash Report\n");
+    fprintf(f, "============================================\n");
+    fprintf(f, "Date: %04d-%02d-%02d  %02d:%02d:%02d\n\n",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    PEXCEPTION_RECORD er = pExceptionInfo->ExceptionRecord;
+    PCONTEXT ctx = pExceptionInfo->ContextRecord;
+
+    fprintf(f, "[Exception]\n");
+    fprintf(f, "  Code:    0x%08X  (%s)\n", er->ExceptionCode, exceptionName(er->ExceptionCode));
+    fprintf(f, "  Address: 0x%p\n", er->ExceptionAddress);
+
+    if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2) {
+        fprintf(f, "  Operation: %s at address 0x%p\n",
+                er->ExceptionInformation[0] == 0 ? "READ" :
+                (er->ExceptionInformation[0] == 1 ? "WRITE" : "EXECUTE"),
+                (void*)er->ExceptionInformation[1]);
+    }
+    if (er->ExceptionCode == EXCEPTION_IN_PAGE_ERROR && er->NumberParameters >= 3) {
+        fprintf(f, "  Operation: %s at address 0x%p  (NTSTATUS: 0x%08X)\n",
+                er->ExceptionInformation[0] == 0 ? "READ" :
+                (er->ExceptionInformation[0] == 1 ? "WRITE" : "EXECUTE"),
+                (void*)er->ExceptionInformation[1],
+                (DWORD)er->ExceptionInformation[2]);
+    }
+
+    fprintf(f, "\n[Registers]\n");
+#ifdef _WIN64
+    fprintf(f, "  RAX=0x%016llX  RBX=0x%016llX  RCX=0x%016llX  RDX=0x%016llX\n",
+            ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx);
+    fprintf(f, "  RSI=0x%016llX  RDI=0x%016llX  RBP=0x%016llX  RSP=0x%016llX\n",
+            ctx->Rsi, ctx->Rdi, ctx->Rbp, ctx->Rsp);
+    fprintf(f, "  RIP=0x%016llX                     EFL=0x%08X\n", ctx->Rip, ctx->EFlags);
+#else
+    fprintf(f, "  EAX=0x%08X  EBX=0x%08X  ECX=0x%08X  EDX=0x%08X\n",
+            ctx->Eax, ctx->Ebx, ctx->Ecx, ctx->Edx);
+    fprintf(f, "  ESI=0x%08X  EDI=0x%08X  EBP=0x%08X  ESP=0x%08X\n",
+            ctx->Esi, ctx->Edi, ctx->Ebp, ctx->Esp);
+    fprintf(f, "  EIP=0x%08X                     EFL=0x%08X\n", ctx->Eip, ctx->EFlags);
+#endif
+
+    fprintf(f, "\n[Stack Trace]\n");
+    void* stack[32];
+    WORD frames = CaptureStackBackTrace(0, 32, stack, nullptr);
+    fprintf(f, "  Frames captured: %d\n", frames);
+    for (WORD i = 0; i < frames; i++) {
+        fprintf(f, "  [%2d] 0x%p\n", i, stack[i]);
+    }
+
+    if (g_game) {
+        fprintf(f, "\n[Game State]\n");
+        fprintf(f, "  State:       %d\n", (int)g_game->state);
+        fprintf(f, "  Level:       %d\n", g_game->currentLevel);
+        fprintf(f, "  Score:       %d\n", g_game->score);
+        fprintf(f, "  HighScore:   %d\n", g_game->highScore);
+        fprintf(f, "  FrameCount:  %d\n", g_game->frameCount);
+        fprintf(f, "  FPS:         %.1f\n", g_game->currentFPS);
+        fprintf(f, "  Resolution:  %dx%d\n", WINDOW_WIDTH, WINDOW_HEIGHT);
+        fprintf(f, "  Enemies:     %d  PlayerBullets: %d  EnemyBullets: %d\n",
+                (int)g_game->enemies.size(), (int)g_game->playerBullets.size(),
+                (int)g_game->enemyBullets.size());
+        fprintf(f, "  Items:       %d  Particles:     %d\n",
+                (int)g_game->items.size(), (int)g_game->particles.size());
+        fprintf(f, "  BossSpawned: %s  BossDefeated: %s\n",
+                g_game->bossSpawned ? "YES" : "NO", g_game->bossDefeated ? "YES" : "NO");
+        fprintf(f, "  GodMode:     %s  OneHitKill:   %s\n",
+                g_game->godMode ? "YES" : "NO", g_game->oneHitKill ? "YES" : "NO");
+        if (g_game->player) {
+            fprintf(f, "  Player: HP=%d  Bombs=%d  Firepower=Lv.%d  Shield=%s\n",
+                    g_game->player->lives, g_game->player->bombCount,
+                    g_game->player->firepowerLevel,
+                    g_game->player->shieldActive ? "YES" : "NO");
+        }
+        fprintf(f, "  RenderBackend: %s  D2DAvail: %s  PerfMode: %s\n",
+                g_game->useDirect2D ? "D2D" : "GDI+",
+                g_game->d2dAvailable ? "YES" : "NO",
+                g_game->perfMode ? "YES" : "NO");
+    }
+
+    fprintf(f, "\n============================================\n");
+    fclose(f);
+
+    // 显示消息框通知用户
+    wchar_t msg[512];
+    swprintf_s(msg, _countof(msg),
+        L"Plane War encountered a critical error!\n\n"
+        L"Exception: %hs (0x%08X)\n"
+        L"Address: 0x%p\n\n"
+        L"A crash report has been saved:\n%hs\n\n"
+        L"The game will attempt to return to the main menu.",
+        exceptionName(er->ExceptionCode), er->ExceptionCode,
+        er->ExceptionAddress, filename);
+    MessageBoxW(nullptr, msg, L"Plane War - Crash Report", MB_OK | MB_ICONERROR);
+}
+
+// SEH 异常过滤器（在 run() 的 __try/__except 中使用）
+static int crashFilter(EXCEPTION_POINTERS* pExceptionInfo) {
+    writeCrashLog(pExceptionInfo);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 // 前向声明
 static const wchar_t* widen(const char* s);
 Renderer* CreateGdiplusRenderer(Gdiplus::Graphics* graphics, int width, int height);
@@ -171,6 +320,9 @@ Game::Game()
     , penSeparator(nullptr)
     , starBrushes{nullptr, nullptr, nullptr, nullptr}
     , renderer(nullptr), useDirect2D(true), d2dAvailable(false)
+    , cachedMemMB(0), memUpdateCounter(0)
+    , godMode(false), oneHitKill(false), cheatSelection(0)
+    , m_hHeartbeatMap(nullptr), m_pHeartbeat(nullptr)
 {
     g_game = this;
     memset(nameBuffer, 0, sizeof(nameBuffer));
@@ -219,6 +371,8 @@ bool Game::init(HINSTANCE hInst) {
 
     createRenderResources();
     initDirect2D();  // 探测 D2D 可用性
+    SoundManager::instance().init();  // 初始化音效系统
+    initHeartbeat();  // 初始化看门狗心跳共享内存
     applySkin(currentSkin);
     loadLeaderboard();
     resetStars();
@@ -468,6 +622,8 @@ void Game::releaseBullet(Bullet* b) {
 // ========== 关闭 ==========
 
 void Game::shutdown() {
+    SoundManager::instance().shutdown();  // 关闭音效系统
+    closeHeartbeat();  // 关闭看门狗心跳
     saveSettings();  // 持久化用户设置
     // 程序退出：快速清理，避免逐对象释放造成的卡顿
     delete player; player = nullptr;
@@ -509,61 +665,165 @@ void Game::resetGame() {
     enemySpawnTimer = 0; enemiesKilledThisLevel = 0;
     bossSpawned = false; bossDefeated = false;
     shakeTimer = 0; shakeIntensity = 0;
+    godMode = false; oneHitKill = false; cheatSelection = 0;
     state = GameState::PLAYING; stateTimer = 0; frameCount = 0;
     QueryPerformanceCounter(&qpcPrev);
+}
+
+// ========== 崩溃恢复 ==========
+
+void Game::crashRecover() {
+    // 安全清理实体（逐个判空，防止崩溃后的半毁状态二次崩溃）
+    if (player) { delete player; player = nullptr; }
+    for (auto* e : enemies) { if (e) delete e; }
+    for (auto* b : playerBullets) { if (b) { b->alive = false; releaseBullet(b); } }
+    for (auto* b : enemyBullets)  { if (b) { b->alive = false; releaseBullet(b); } }
+    for (auto* i : items) { if (i) delete i; }
+    enemies.clear(); playerBullets.clear();
+    enemyBullets.clear(); items.clear();
+    particles.clear();
+
+    // 重置所有运行时状态
+    state = GameState::MENU;
+    menuSelection = MenuOption::START_GAME;
+    score = 0; currentLevel = 1;
+    bossSpawned = false; bossDefeated = false;
+    shakeTimer = 0; shakeIntensity = 0;
+    godMode = false; oneHitKill = false;
+    spawnInterval = 40;
+    fastEnemyChance = 0.1f; shootingEnemyChance = 0;
+    enemySpawnTimer = 0; enemiesKilledThisLevel = 0;
+    scoreToNextLevel = 500;
+    // 清除所有按键状态（防止卡输入）
+    keyLeft = keyRight = keyUp = keyDown = false;
+    keySpace = keyBomb = keyShift = keyCtrl = false;
+    menuCooldown = 15;
+    cheatSelection = 0;
+    QueryPerformanceCounter(&qpcPrev);
+}
+
+// ========== 看门狗心跳 ==========
+
+void Game::initHeartbeat() {
+    m_hHeartbeatMap = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                         0, sizeof(HeartbeatData), "PlaneWar_Heartbeat");
+    if (m_hHeartbeatMap) {
+        m_pHeartbeat = (HeartbeatData*)MapViewOfFile(m_hHeartbeatMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(HeartbeatData));
+        if (m_pHeartbeat) {
+            memset(m_pHeartbeat, 0, sizeof(HeartbeatData));
+            m_pHeartbeat->processId = GetCurrentProcessId();
+            m_pHeartbeat->resolutionW = WINDOW_WIDTH;
+            m_pHeartbeat->resolutionH = WINDOW_HEIGHT;
+        }
+    }
+}
+
+void Game::updateHeartbeat() {
+    if (!m_pHeartbeat) return;
+    m_pHeartbeat->frameCount = frameCount;
+    m_pHeartbeat->lastTick = GetTickCount();
+    m_pHeartbeat->gameState = (DWORD)state;
+    m_pHeartbeat->currentLevel = currentLevel;
+    m_pHeartbeat->score = score;
+    m_pHeartbeat->enemyCount = (DWORD)enemies.size();
+    m_pHeartbeat->bulletCount = (DWORD)(playerBullets.size() + enemyBullets.size());
+    m_pHeartbeat->itemCount = (DWORD)items.size();
+    m_pHeartbeat->godMode = godMode ? 1 : 0;
+    m_pHeartbeat->oneHitKill = oneHitKill ? 1 : 0;
+    m_pHeartbeat->currentFPS = currentFPS;
+
+    // 音频线程健康看门狗：检测到音频线程卡死时自动重置设备
+    static int audioWatchdogCounter = 0;
+    audioWatchdogCounter++;
+    if (audioWatchdogCounter >= 120) {  // 每 2 秒检查一次 (~60fps * 2)
+        audioWatchdogCounter = 0;
+        if (!SoundManager::instance().isAudioHealthy()) {
+            SoundManager::instance().resetAudioDevice();
+        }
+    }
+}
+
+void Game::closeHeartbeat() {
+    if (m_pHeartbeat) { UnmapViewOfFile(m_pHeartbeat); m_pHeartbeat = nullptr; }
+    if (m_hHeartbeatMap) { CloseHandle(m_hHeartbeatMap); m_hHeartbeatMap = nullptr; }
 }
 
 // ========== QPC 主循环 ==========
 
 void Game::run() {
     MSG msg;
-    const double LOGIC_DT = 1.0 / 60.0;   // 固定 60 Hz 逻辑更新 — 不受刷新率影响
     double accumulator = 0.0;
+    bool shouldExit = false;
 
-    while (true) {
+    while (!shouldExit) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { hwnd = nullptr; return; }
             TranslateMessage(&msg); DispatchMessage(&msg);
         }
         if (!hwnd) break;
 
-        LARGE_INTEGER frameStart;
-        QueryPerformanceCounter(&frameStart);
-        double frameDt = (double)(frameStart.QuadPart - qpcPrev.QuadPart) / qpcFreq.QuadPart;
-        qpcPrev = frameStart;
+        // SEH 保护：捕获单帧内的所有硬件异常（访问违例、除零等）
+        // 使用标志位代替 break/return 避免跨越 __try 边界的控制流问题
+        bool frameExit = false;
+        __try {
+            LARGE_INTEGER frameStart;
+            QueryPerformanceCounter(&frameStart);
+            double frameDt = (double)(frameStart.QuadPart - qpcPrev.QuadPart) / qpcFreq.QuadPart;
+            qpcPrev = frameStart;
 
-        // 防止断点/休眠后时间螺旋
-        if (frameDt > 0.25) frameDt = 0.25;
+            // 防止断点/休眠后时间螺旋
+            if (frameDt > 0.25) frameDt = 0.25;
 
-        // ── 平滑 FPS（指数移动平均） ──
-        if (frameDt > 0.0) {
-            float instantFPS = (float)(1.0 / frameDt);
-            currentFPS = currentFPS > 0.0f ? currentFPS * 0.9f + instantFPS * 0.1f : instantFPS;
+            // ── 平滑 FPS（指数移动平均） ──
+            if (frameDt > 0.0) {
+                float instantFPS = (float)(1.0 / frameDt);
+                currentFPS = currentFPS > 0.0f ? currentFPS * 0.9f + instantFPS * 0.1f : instantFPS;
+            }
+
+            handleInput();
+            if (!hwnd) { frameExit = true; }  // 用户退出，离开 SEH 后再 break
+            else {
+                // ── 可变步长逻辑（由 gameTickRate 控制） ──
+                double logicDt = 1.0 / TICK_RATES[currentGameTick];
+                accumulator += frameDt;
+
+                // 防止"死亡螺旋"：每帧最多 MAX_LOGIC_UPDATES 次逻辑更新
+                static const int MAX_LOGIC_UPDATES = 10;
+                int logicFrames = 0;
+                while (accumulator >= logicDt && logicFrames < MAX_LOGIC_UPDATES) {
+                    update();
+                    collide();
+                    accumulator -= logicDt;
+                    frameCount++;
+                    logicFrames++;
+                }
+                if (accumulator > logicDt * 3.0) {
+                    accumulator = 0.0;
+                }
+
+                render();
+                updateHeartbeat();  // 通知看门狗本帧已完成
+
+                // ── 渲染帧率上限 (省电，不影响游戏速度) ──
+                LARGE_INTEGER now;
+                QueryPerformanceCounter(&now);
+                double elapsed = (double)(now.QuadPart - frameStart.QuadPart) / qpcFreq.QuadPart;
+                if (elapsed < TARGET_FRAME_TIME && elapsed >= 0.0) {
+                    DWORD sleepMs = (DWORD)((TARGET_FRAME_TIME - elapsed) * 1000.0);
+                    if (sleepMs > 0 && sleepMs <= 100) Sleep(sleepMs);  // 上限 100ms 防止异常长休眠
+                }
+            }
+        }
+        __except (crashFilter(GetExceptionInformation())) {
+            // 崩溃恢复：写日志 + 清空状态 + 返回主菜单
+            crashRecover();
+            accumulator = 0.0;
+            QueryPerformanceCounter(&qpcPrev);
+            // 继续 while 循环，玩家停留在主菜单
+            continue;
         }
 
-        handleInput();
-        if (!hwnd) break;
-
-        // ── 可变步长逻辑（由 gameTickRate 控制） ──
-        double logicDt = 1.0 / TICK_RATES[currentGameTick];
-        accumulator += frameDt;
-        while (accumulator >= logicDt) {
-            update();
-            collide();
-            accumulator -= logicDt;
-            frameCount++;
-        }
-
-        render();
-
-        // ── 渲染帧率上限 (省电，不影响游戏速度) ──
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        double elapsed = (double)(now.QuadPart - frameStart.QuadPart) / qpcFreq.QuadPart;
-        if (elapsed < TARGET_FRAME_TIME) {
-            DWORD sleepMs = (DWORD)((TARGET_FRAME_TIME - elapsed) * 1000.0);
-            if (sleepMs > 0) Sleep(sleepMs);
-        }
+        if (frameExit) shouldExit = true;
     }
 }
 
@@ -726,6 +986,80 @@ void Game::handleInput() {
         if (enter || esc) { state = GameState::MENU; menuCooldown = 15; }
     }
 
+    // ── 作弊菜单 ──
+    if (state == GameState::CHEAT_MENU && menuCooldown <= 0) {
+        bool up   = (GetAsyncKeyState(VK_UP)&0x8000)||(GetAsyncKeyState('W')&0x8000);
+        bool dn   = (GetAsyncKeyState(VK_DOWN)&0x8000)||(GetAsyncKeyState('S')&0x8000);
+        bool left = (GetAsyncKeyState(VK_LEFT)&0x8000)||(GetAsyncKeyState('A')&0x8000);
+        bool right= (GetAsyncKeyState(VK_RIGHT)&0x8000)||(GetAsyncKeyState('D')&0x8000);
+        bool enter= (GetAsyncKeyState(VK_RETURN)&0x8000)!=0;
+        bool esc  = (GetAsyncKeyState(VK_ESCAPE)&0x8000)!=0;
+
+        static const int CHEAT_OPTIONS = 9;
+        if (up)   { cheatSelection = (cheatSelection - 1 + CHEAT_OPTIONS) % CHEAT_OPTIONS; menuCooldown = 8; }
+        if (dn)   { cheatSelection = (cheatSelection + 1) % CHEAT_OPTIONS; menuCooldown = 8; }
+
+        if (enter || left || right) {
+            menuCooldown = 12;
+            switch (cheatSelection) {
+            case 0: // 切换关卡 ←→ 调整
+                if (left  && currentLevel > 1) currentLevel--;
+                if (right && currentLevel < 20) currentLevel++;
+                if (enter) currentLevel = (currentLevel % 5) + 1;  // 循环 1-5
+                // 更新关卡参数
+                {
+                    bossSpawned = false; bossDefeated = false;
+                    enemySpawnTimer = 60;
+                    switch (currentLevel) {
+                    case 1: scoreToNextLevel=score+500; spawnInterval=40; fastEnemyChance=0.1f; shootingEnemyChance=0; break;
+                    case 2: scoreToNextLevel=score+800; spawnInterval=28; fastEnemyChance=0.25f; shootingEnemyChance=0.1f; break;
+                    case 3: scoreToNextLevel=score+1200; spawnInterval=20; fastEnemyChance=0.3f; shootingEnemyChance=0.2f; break;
+                    case 4: scoreToNextLevel=score+1600; spawnInterval=15; fastEnemyChance=0.35f; shootingEnemyChance=0.3f; break;
+                    default: scoreToNextLevel=score+2000; spawnInterval=std::max(8.0f,spawnInterval-3); fastEnemyChance=std::min(0.5f,fastEnemyChance+0.05f); shootingEnemyChance=std::min(0.4f,shootingEnemyChance+0.05f); break;
+                    }
+                }
+                break;
+            case 1: if (enter) godMode = !godMode; break;                    // 无敌模式 开关
+            case 2: if (enter) oneHitKill = !oneHitKill; break;              // 一击必杀 开关
+            case 3: // 生命值 ←→ 增减
+                if (player) {
+                    if (left)  player->lives = (std::max)(0, player->lives - 1);
+                    if (right) player->lives = (std::min)(player->lives + 1, PLAYER_MAX_LIVES);
+                }
+                break;
+            case 4: // 炸弹 ←→ 增减
+                if (player) {
+                    if (left)  player->bombCount = (std::max)(0, player->bombCount - 1);
+                    if (right) player->bombCount = (std::min)(player->bombCount + 1, PLAYER_MAX_BOMBS);
+                }
+                break;
+            case 5: // 火力等级 ←→ 增减
+                if (player) {
+                    if (left)  { player->firepowerLevel = (std::max)(1, player->firepowerLevel - 1); player->firepowerTimer = FIREPOWER_DURATION; }
+                    if (right) { player->firepowerLevel = (std::min)(player->firepowerLevel + 1, PLAYER_MAX_FIREPOWER); player->firepowerTimer = FIREPOWER_DURATION; }
+                }
+                break;
+            case 6: // 分数 ←→ 增减
+                if (left)  score = (std::max)(0, score - 500);
+                if (right) score += 500;
+                break;
+            case 7: // 召唤 Boss
+                if (enter && state == GameState::CHEAT_MENU && !bossSpawned) {
+                    for (auto it = enemies.begin(); it != enemies.end(); ) {
+                        if ((*it)->getType() != EnemyType::BOSS) { delete *it; it = enemies.erase(it); }
+                        else ++it;
+                    }
+                    bossSpawned = true;
+                    enemies.push_back(new Boss(WINDOW_WIDTH / 2.0f - BOSS_WIDTH * GAME_SCALE / 2.0f, currentLevel));
+                }
+                break;
+            case 8: // 返回游戏
+                if (enter) state = GameState::PAUSED; break;
+            }
+        }
+        if (esc) { state = GameState::PAUSED; menuCooldown = 12; }
+    }
+
     // ── 鼠标点击统一处理 ──
     if (!mouseClicked) return;
     mouseClicked = false;
@@ -816,6 +1150,11 @@ void Game::handleInput() {
             state = GameState::MENU;
             return;
         }
+        // CHEAT 按钮（MENU 下方）
+        float cy = by + btnH + 4 * sc;
+        if (clickIn(mx, my, bx, cy, btnW, btnH)) {
+            cheatSelection = 0; state = GameState::CHEAT_MENU; menuCooldown = 10; return;
+        }
         state = GameState::PLAYING; return;
     }
 
@@ -846,6 +1185,87 @@ void Game::handleInput() {
 
     if (state == GameState::LEVEL_TRANSITION) {
         stateTimer = 0; state = GameState::PLAYING; return;
+    }
+
+    if (state == GameState::CHEAT_MENU) {
+        float sc = (std::min)(WINDOW_HEIGHT / 480.0f, 2.2f);
+        if (clickBackBtn(mx, my, sc)) { state = GameState::PAUSED; return; }
+
+        float startY = 80 * sc, rowH = 26 * sc;
+        float col1 = 30 * sc;
+        float btnW = 26 * sc, btnH = 18 * sc;
+        float btnGap = 4 * sc;
+        float btnYOff = (rowH - btnH) / 2.0f;
+        float btnRowRight = WINDOW_WIDTH - col1;
+
+        static const int CHEAT_OPTIONS = 9;
+        for (int i = 0; i < CHEAT_OPTIONS; i++) {
+            float y = startY + i * rowH;
+            float rowRight = WINDOW_WIDTH - col1 * 2;
+            bool isToggle = (i == 1 || i == 2);
+            bool isAction = (i == 7 || i == 8);
+
+            if (isAction) {
+                // 动作按钮（SPAWN / BACK）
+                float abx = btnRowRight - btnW * 2;
+                if (clickIn(mx, my, abx, y + btnYOff, btnW * 2 + btnGap, btnH)) {
+                    cheatSelection = i;
+                    if (i == 7) { if (!bossSpawned) { for (auto it = enemies.begin(); it != enemies.end(); ) { if ((*it)->getType() != EnemyType::BOSS) { delete *it; it = enemies.erase(it); } else ++it; } bossSpawned = true; enemies.push_back(new Boss(WINDOW_WIDTH / 2.0f - BOSS_WIDTH * GAME_SCALE / 2.0f, currentLevel)); } }
+                    else if (i == 8) state = GameState::PAUSED;
+                    return;
+                }
+            } else if (isToggle) {
+                // [OFF] 按钮
+                float bx1 = btnRowRight - btnW * 2 - btnGap;
+                if (clickIn(mx, my, bx1, y + btnYOff, btnW, btnH)) {
+                    cheatSelection = i;
+                    if (i == 1) godMode = false; else oneHitKill = false;
+                    return;
+                }
+                // [ON] 按钮
+                float bx2 = btnRowRight - btnW;
+                if (clickIn(mx, my, bx2, y + btnYOff, btnW, btnH)) {
+                    cheatSelection = i;
+                    if (i == 1) godMode = true; else oneHitKill = true;
+                    return;
+                }
+            } else {
+                // [-] 按钮
+                float bx1 = btnRowRight - btnW * 2 - btnGap;
+                if (clickIn(mx, my, bx1, y + btnYOff, btnW, btnH)) {
+                    cheatSelection = i;
+                    if (i == 0) { if (currentLevel > 1) currentLevel--; bossSpawned = false; bossDefeated = false; enemySpawnTimer = 60; switch (currentLevel) { case 1: scoreToNextLevel=score+500; spawnInterval=40; fastEnemyChance=0.1f; shootingEnemyChance=0; break; case 2: scoreToNextLevel=score+800; spawnInterval=28; fastEnemyChance=0.25f; shootingEnemyChance=0.1f; break; case 3: scoreToNextLevel=score+1200; spawnInterval=20; fastEnemyChance=0.3f; shootingEnemyChance=0.2f; break; case 4: scoreToNextLevel=score+1600; spawnInterval=15; fastEnemyChance=0.35f; shootingEnemyChance=0.3f; break; default: scoreToNextLevel=score+2000; spawnInterval=std::max(8.0f,spawnInterval-3); fastEnemyChance=std::min(0.5f,fastEnemyChance+0.05f); shootingEnemyChance=std::min(0.4f,shootingEnemyChance+0.05f); break; } }
+                    else if (i == 3) { if (player) player->lives = (std::max)(0, player->lives - 1); }
+                    else if (i == 4) { if (player) player->bombCount = (std::max)(0, player->bombCount - 1); }
+                    else if (i == 5) { if (player) { player->firepowerLevel = (std::max)(1, player->firepowerLevel - 1); player->firepowerTimer = FIREPOWER_DURATION; } }
+                    else if (i == 6) score = (std::max)(0, score - 500);
+                    return;
+                }
+                // [+] 按钮
+                float bx2 = btnRowRight - btnW;
+                if (clickIn(mx, my, bx2, y + btnYOff, btnW, btnH)) {
+                    cheatSelection = i;
+                    if (i == 0) { if (currentLevel < 20) currentLevel++; bossSpawned = false; bossDefeated = false; enemySpawnTimer = 60; switch (currentLevel) { case 1: scoreToNextLevel=score+500; spawnInterval=40; fastEnemyChance=0.1f; shootingEnemyChance=0; break; case 2: scoreToNextLevel=score+800; spawnInterval=28; fastEnemyChance=0.25f; shootingEnemyChance=0.1f; break; case 3: scoreToNextLevel=score+1200; spawnInterval=20; fastEnemyChance=0.3f; shootingEnemyChance=0.2f; break; case 4: scoreToNextLevel=score+1600; spawnInterval=15; fastEnemyChance=0.35f; shootingEnemyChance=0.3f; break; default: scoreToNextLevel=score+2000; spawnInterval=std::max(8.0f,spawnInterval-3); fastEnemyChance=std::min(0.5f,fastEnemyChance+0.05f); shootingEnemyChance=std::min(0.4f,shootingEnemyChance+0.05f); break; } }
+                    else if (i == 3) { if (player) player->lives = (std::min)(player->lives + 1, PLAYER_MAX_LIVES); }
+                    else if (i == 4) { if (player) player->bombCount = (std::min)(player->bombCount + 1, PLAYER_MAX_BOMBS); }
+                    else if (i == 5) { if (player) { player->firepowerLevel = (std::min)(player->firepowerLevel + 1, PLAYER_MAX_FIREPOWER); player->firepowerTimer = FIREPOWER_DURATION; } }
+                    else if (i == 6) score += 500;
+                    return;
+                }
+            }
+
+            // 点击行文本区域选中该行
+            if (clickIn(mx, my, col1, y, rowRight - (isAction ? 0 : btnW * 2 + btnGap + 4*sc), rowH)) {
+                cheatSelection = i;
+                // 对于动作类选项，点击文本即触发
+                if (isAction) {
+                    if (i == 7) { if (!bossSpawned) { for (auto it = enemies.begin(); it != enemies.end(); ) { if ((*it)->getType() != EnemyType::BOSS) { delete *it; it = enemies.erase(it); } else ++it; } bossSpawned = true; enemies.push_back(new Boss(WINDOW_WIDTH / 2.0f - BOSS_WIDTH * GAME_SCALE / 2.0f, currentLevel)); } }
+                    else if (i == 8) state = GameState::PAUSED;
+                }
+                return;
+            }
+        }
+        state = GameState::PAUSED; return;
     }
 
     if (state == GameState::SKIN_SELECT) {
@@ -895,6 +1315,7 @@ void Game::update() {
         // ── 自动连续射击 ──
         if (player->canShoot()) {
             player->resetShootCooldown();
+            SoundManager::instance().playShoot();  // 射击音效
             float sc = GAME_SCALE;
             float cx = player->centerX(), by = player->y;
             int lv = player->firepowerLevel;
@@ -999,10 +1420,10 @@ void Game::outOfBoundsCleanup() {
         if (!(*it)->alive||(*it)->y>WINDOW_HEIGHT+50) { delete *it; it=enemies.erase(it); } else ++it;
     }
     for (auto it=playerBullets.begin(); it!=playerBullets.end();) {
-        if ((*it)->y<-20||(*it)->y>WINDOW_HEIGHT+20) { releaseBullet(*it); it=playerBullets.erase(it); } else ++it;
+        if ((*it)->y<-20||(*it)->y>WINDOW_HEIGHT+20||(*it)->x<-100||(*it)->x>WINDOW_WIDTH+100) { releaseBullet(*it); it=playerBullets.erase(it); } else ++it;
     }
     for (auto it=enemyBullets.begin(); it!=enemyBullets.end();) {
-        if ((*it)->y<-20||(*it)->y>WINDOW_HEIGHT+20) { releaseBullet(*it); it=enemyBullets.erase(it); } else ++it;
+        if ((*it)->y<-20||(*it)->y>WINDOW_HEIGHT+20||(*it)->x<-100||(*it)->x>WINDOW_WIDTH+100) { releaseBullet(*it); it=enemyBullets.erase(it); } else ++it;
     }
     for (auto it=items.begin(); it!=items.end();) {
         if (!(*it)->alive||(*it)->y>WINDOW_HEIGHT+20) { delete *it; it=items.erase(it); } else ++it;
@@ -1016,12 +1437,49 @@ void Game::activateBomb() {
     if (!player||player->bombCount<=0) return;
     player->bombCount--;
     for (auto* e : enemies) {
-        if (e->getType()==EnemyType::BOSS&&e->alive) { bossDefeated=true; if (currentLevel>=LEVEL_COUNT) state=GameState::VICTORY; }
-        spawnParticles(e->centerX(), e->centerY(), EXPLOSION_PARTICLES, Palette::ParticleExplosion, Palette::ParticleExplosion, 0.8f,4,1,3);
-        if (e->getType()!=EnemyType::BOSS) score+=e->scoreValue;
-        delete e;
+        // Boss：炸弹造成 50% 最大生命值伤害，而非直接击杀
+        if (e->getType()==EnemyType::BOSS&&e->alive) {
+            Boss* boss = static_cast<Boss*>(e);
+            int damage = boss->maxHp / 2;
+            if (damage < 1) damage = 1;
+            boss->hp -= damage;
+            spawnParticles(e->centerX(), e->centerY(), EXPLOSION_PARTICLES * 3,
+                Palette::ParticleExplosion, Palette::ParticleExplosion, 0.8f, 4, 1, 3);
+            // 扣血后判定击杀
+            if (boss->hp <= 0) {
+                boss->alive = false;
+                bossDefeated = true;
+                score += boss->scoreValue;
+                enemiesKilledThisLevel++;
+                SoundManager::instance().playExplosion();
+                for (int w=0;w<BOSS_EXPLOSION_WAVES;w++)
+                    spawnParticles(boss->centerX(),boss->centerY(),EXPLOSION_PARTICLES*4,
+                        Color(255,255,40+w*60,0),Color(255,255,180,20+w*30),1+w*0.5f,5+w*1.5f,1.5f,4);
+                for (int d=0;d<3;d++) {
+                    float rr=(rand()%100)/100.0f; ItemType it;
+                    if (rr<0.35f) it=ItemType::FIREPOWER; else if(rr<0.55f) it=ItemType::HEALTH;
+                    else if(rr<0.70f) it=ItemType::BOMB; else if(rr<0.85f) it=ItemType::SHIELD;
+                    else it=ItemType::FIRERATE;
+                    items.push_back(new Item(boss->centerX()-ITEM_SIZE/2.0f+(d-1)*30.0f, boss->y, it));
+                }
+                shakeTimer=30; shakeIntensity=8;
+                if (currentLevel>=LEVEL_COUNT) state=GameState::VICTORY;
+            }
+        } else {
+            // 普通/快速/射击敌机：直接秒杀
+            spawnParticles(e->centerX(), e->centerY(), EXPLOSION_PARTICLES, Palette::ParticleExplosion, Palette::ParticleExplosion, 0.8f,4,1,3);
+            score+=e->scoreValue;
+            delete e;
+        }
     }
-    enemies.clear();
+    // 移除所有非Boss敌机（Boss如未死则保留）
+    for (auto it = enemies.begin(); it != enemies.end(); ) {
+        if ((*it)->getType() != EnemyType::BOSS) {
+            it = enemies.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (auto* b:enemyBullets) releaseBullet(b);
     enemyBullets.clear();
     shakeTimer=20; shakeIntensity=6;
@@ -1062,8 +1520,12 @@ void Game::checkBulletEnemyCollisions() {
         for (auto* e : enemies) {
             if (!e->alive) continue;
             if (checkCollision(*b, *e)) {
-                b->alive=false; e->hp-=b->damage;
+                b->alive=false;
+                // 一击必杀模式：直接清零血量（含Boss）
+                if (oneHitKill) e->hp = 0;
+                else e->hp-=b->damage;
                 if (e->hp<=0) {
+                    SoundManager::instance().playExplosion();  // 摧毁爆炸音效
                     e->alive=false; score+=e->scoreValue; enemiesKilledThisLevel++;
                     if (e->getType()==EnemyType::BOSS) {
                         for (int w=0;w<BOSS_EXPLOSION_WAVES;w++)
@@ -1097,6 +1559,7 @@ void Game::checkBulletEnemyCollisions() {
 }
 
 void Game::checkEnemyBulletPlayerCollisions() {
+    if (godMode) return;  // 无敌模式：无视敌方子弹
     for (auto* b:enemyBullets) {
         if (!b->alive) continue;
         if (checkCollision(*b,*player)) {
@@ -1109,6 +1572,7 @@ void Game::checkEnemyBulletPlayerCollisions() {
                     Color(255,100,200,255), Color(255,50,150,255), 0.8f, 3.0f, 0.5f, 2.0f);
                 return;
             }
+            SoundManager::instance().playHit();  // 玩家被击中音效
             player->takeDamage();
             spawnParticles(player->centerX(),player->centerY(),15,Color(255,255,200,60),Color(255,255,150,30),0.5f,2.5f,0.5f,1.5f);
             shakeTimer=10; shakeIntensity=4;
@@ -1119,7 +1583,7 @@ void Game::checkEnemyBulletPlayerCollisions() {
 }
 
 void Game::checkEnemyPlayerCollisions() {
-    if (player->isInvincible()) return;
+    if (godMode || player->isInvincible()) return;
     for (auto* e:enemies) {
         if (!e->alive) continue;
         if (checkCollision(*player,*e)) {
@@ -1133,6 +1597,7 @@ void Game::checkEnemyPlayerCollisions() {
                 return;
             }
             e->alive=false; player->takeDamage();
+            SoundManager::instance().playExplosion();  // 撞击爆炸音效
             spawnParticles(e->centerX(),e->centerY(),EXPLOSION_PARTICLES/2,Palette::ParticleExplosion,Palette::ParticleExplosion,0.5f,2.5f,1,2);
             spawnParticles(player->centerX(),player->centerY(),12,Color(255,255,200,60),Color(255,255,150,30),0.5f,2,0.5f,1.5f);
             shakeTimer=15; shakeIntensity=5;
@@ -1187,13 +1652,25 @@ void Game::spawnParticles(float cx, float cy, int cnt, Color c, Color tc, float 
 
 void Game::advanceLevel() {
     bossSpawned=true;
-    for (auto* e:enemies) {
-        if (e->getType()!=EnemyType::BOSS) { spawnParticles(e->centerX(),e->centerY(),6,Color(255,255,200,60),Color(255,255,150,30),0.3f,1.5f,1,1.5f); delete e; }
+    // 先为所有非Boss敌机生成粒子特效，再统一删除（避免二次释放）
+    for (auto* e : enemies) {
+        if (e->getType() != EnemyType::BOSS) {
+            spawnParticles(e->centerX(), e->centerY(), 6,
+                Color(255, 255, 200, 60), Color(255, 255, 150, 30), 0.3f, 1.5f, 1, 1.5f);
+        }
     }
-    enemies.erase(std::remove_if(enemies.begin(),enemies.end(),[](Enemy*e){return e->getType()!=EnemyType::BOSS;}), enemies.end());
-    for (auto* b:enemyBullets) releaseBullet(b);
+    // 安全地删除非Boss敌机（边遍历边erase，只访问一次指针）
+    for (auto it = enemies.begin(); it != enemies.end(); ) {
+        if ((*it)->getType() != EnemyType::BOSS) {
+            delete *it;
+            it = enemies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto* b : enemyBullets) releaseBullet(b);
     enemyBullets.clear();
-    enemies.push_back(new Boss(WINDOW_WIDTH/2.0f - BOSS_WIDTH*GAME_SCALE/2.0f, currentLevel));
+    enemies.push_back(new Boss(WINDOW_WIDTH / 2.0f - BOSS_WIDTH * GAME_SCALE / 2.0f, currentLevel));
 }
 
 void Game::startNextLevel() {
@@ -1327,6 +1804,19 @@ void Game::render() {
     case GameState::LEADERBOARD: renderLeaderboard(*renderer); break;
     case GameState::NAME_ENTRY:  renderNameEntry(*renderer); break;
     case GameState::SKIN_SELECT: renderSkinSelect(*renderer); break;
+    case GameState::CHEAT_MENU:
+        renderBackground(*renderer);
+        renderParticles(*renderer);
+        renderItems(*renderer);
+        renderEnemies(*renderer);
+        for (auto* e : enemies)
+            if (e->getType()==EnemyType::BOSS && e->alive)
+                static_cast<Boss*>(e)->renderHPBar(*renderer);
+        renderBullets(*renderer);
+        if (player) player->render(*renderer);
+        renderHUD(*renderer);
+        renderCheatMenu(*renderer);
+        break;
     }
 
     renderer->endFrame();
@@ -1476,13 +1966,16 @@ void Game::renderHUD(Renderer& r) {
 
     // ── 性能监视器（右上角） ──
     {
-        // 内存占用 (MB)
-        PROCESS_MEMORY_COUNTERS pmc = {};
-        SIZE_T memMB = 0;
-        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
-            memMB = pmc.WorkingSetSize / (1024 * 1024);
+        // 内存占用每 60 帧更新一次（约1秒 @60fps），避免 GetProcessMemoryInfo 阻塞渲染
+        if (memUpdateCounter <= 0) {
+            PROCESS_MEMORY_COUNTERS pmc = {};
+            if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+                cachedMemMB = pmc.WorkingSetSize / (1024 * 1024);
+            memUpdateCounter = 60;
+        }
+        memUpdateCounter--;
 
-        sprintf_s(buf, sizeof(buf), "FPS %d  MEM %3zuM", (int)(currentFPS + 0.5f), memMB);
+        sprintf_s(buf, sizeof(buf), "FPS %d  MEM %3zuM", (int)(currentFPS + 0.5f), cachedMemMB);
         r.drawTextLeft(widen(buf), rx, yPos, rxW, lineH, ff, (float)fsSm, FontStyleRegular, Color(255, 160, 180, 160));
     }
 
@@ -1494,8 +1987,21 @@ void Game::renderHUD(Renderer& r) {
                            keyShift ? Color(255, 0, 255, 100) : Color(255, 100, 200, 255));
     }
 
-    // ── 底部按键提示条（居中） ──
+    // ── 作弊状态指示器 ──
     float barH = lineH * 1.2f;
+    if (godMode || oneHitKill) {
+        float cheatY = WINDOW_HEIGHT - barH * 2.0f - pad;
+        wchar_t cheatBuf[64] = {};
+        if (godMode && oneHitKill)
+            swprintf_s(cheatBuf, _countof(cheatBuf), L"[GOD MODE] [1-HIT KILL]");
+        else if (godMode)
+            swprintf_s(cheatBuf, _countof(cheatBuf), L"[GOD MODE]");
+        else
+            swprintf_s(cheatBuf, _countof(cheatBuf), L"[1-HIT KILL]");
+        r.drawTextCentered(cheatBuf, 0, cheatY, (float)WINDOW_WIDTH, barH, ff, (float)fsSm, FontStyleBold, Color(255, 120, 255, 120));
+    }
+
+    // ── 底部按键提示条（居中） ──
     float barY = WINDOW_HEIGHT - barH - pad;
     r.drawTextCentered(widen("[H] Help  [Shift] Speed  [Ctrl] Slow  [B] Bomb  [P] Pause  AutoFire ON"),
                        0, barY, (float)WINDOW_WIDTH, barH, ff, (float)fsSm, FontStyleRegular, Color(180, 160, 160, 160));
@@ -1665,6 +2171,12 @@ void Game::renderPauseOverlay(Renderer& r) {
     r.fillRect(bx, by, btnW, btnH, Color(220, 80, 50, 50));
     r.drawRect(bx, by, btnW, btnH, Color(255, 255, 120, 120), 1.5f);
     r.drawTextCentered(L"MENU", bx, by, btnW, btnH, ff, (std::max)(10.0f, 12*sc), FontStyleBold, Color(255, 255, 200, 200));
+
+    // ── 作弊菜单按钮（MENU 下方） ──
+    float cy = by + btnH + 4 * sc;
+    r.fillRect(bx, cy, btnW, btnH, Color(220, 50, 80, 50));
+    r.drawRect(bx, cy, btnW, btnH, Color(255, 120, 255, 120), 1.5f);
+    r.drawTextCentered(L"CHEAT", bx, cy, btnW, btnH, ff, (std::max)(10.0f, 12*sc), FontStyleBold, Color(255, 120, 255, 120));
 
     r.drawTextCentered(L"PAUSED",0,120*sc,(float)WINDOW_WIDTH,60*sc,ff,30*sc,FontStyleBold,Color(255,255,220,0));
     r.drawTextCentered(L"P = Resume    ESC / Click RESUME",0,220*sc,(float)WINDOW_WIDTH,40*sc,ff,15*sc,FontStyleRegular,Color(255,185,185,185));
@@ -1860,6 +2372,113 @@ void Game::renderSkinSelect(Renderer& r) {
     // 提示
     r.drawTextCentered(L"Left/Right = Switch  Enter/ESC = Confirm  Click buttons above",
                        0, btnY + btnH + 12 * sc, (float)WINDOW_WIDTH, 18 * sc, ff, 10 * sc, FontStyleRegular, Color(255, 140, 140, 140));
+}
+
+// ========== 各实体渲染委托 ==========
+
+// ========== 作弊/调试菜单 ==========
+
+void Game::renderCheatMenu(Renderer& r) {
+    float sc = (std::min)(WINDOW_HEIGHT / 480.0f, 2.2f);
+    const wchar_t* ff = L"Consolas";
+    renderBackBtn(r, sc, L"CLOSE");
+
+    // 半透明遮罩
+    r.fillRect(0, 0, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT, Color(180, 0, 0, 0));
+
+    // 标题
+    r.drawTextCentered(L"DEBUG CONSOLE", 0, 20 * sc, (float)WINDOW_WIDTH, 36 * sc,
+                       L"Arial", 24 * sc, FontStyleBold, Color(255, 120, 255, 120));
+
+    // 提示
+    r.drawTextCentered(L"Arrows=Navigate  Click buttons / Keyboard Left/Right  ESC=Back",
+                       0, 54 * sc, (float)WINDOW_WIDTH, 18 * sc, ff, 10 * sc, FontStyleRegular, Color(255, 140, 140, 140));
+
+    // 分隔线
+    float sepY = 76 * sc;
+    r.drawLine(40 * sc, sepY, WINDOW_WIDTH - 40 * sc, sepY, Color(255, 80, 80, 80), 1);
+
+    float startY = 80 * sc, rowH = 26 * sc;
+    float col1 = 30 * sc;
+    float btnW = 26 * sc, btnH = 18 * sc;
+    float btnGap = 4 * sc;
+    float btnYOff = (rowH - btnH) / 2.0f;  // 按钮垂直居中
+    float btnRowRight = WINDOW_WIDTH - col1;  // 按钮组右边界
+
+    static const int CHEAT_OPTIONS = 9;
+    for (int i = 0; i < CHEAT_OPTIONS; i++) {
+        bool sel = (i == cheatSelection);
+        Color rowCol = sel ? Color(255, 255, 255, 180) : Color(255, 180, 180, 180);
+        float y = startY + i * rowH;
+
+        // 选中行高亮背景
+        if (sel) r.fillRect(col1 - 4, y - 1, WINDOW_WIDTH - col1 * 2 + 8, rowH, Color(60, 120, 255, 120));
+
+        wchar_t buf[128];
+        bool isToggle = (i == 1 || i == 2);   // 开关类选项
+        bool isAction = (i == 7 || i == 8);   // 动作类选项
+        bool isAdjust = !isToggle && !isAction; // ← → 可调选项
+
+        switch (i) {
+        case 0: swprintf_s(buf, _countof(buf), L"Level             [ %d ]", currentLevel); break;
+        case 1: swprintf_s(buf, _countof(buf), L"God Mode          [ %s ]", godMode ? L"ON " : L"OFF"); break;
+        case 2: swprintf_s(buf, _countof(buf), L"One-Hit Kill      [ %s ]", oneHitKill ? L"ON " : L"OFF"); break;
+        case 3: swprintf_s(buf, _countof(buf), L"Lives             [ %d ]", player ? player->lives : 0); break;
+        case 4: swprintf_s(buf, _countof(buf), L"Bombs             [ %d ]", player ? player->bombCount : 0); break;
+        case 5: swprintf_s(buf, _countof(buf), L"Firepower         [ Lv.%d ]", player ? player->firepowerLevel : 1); break;
+        case 6: swprintf_s(buf, _countof(buf), L"Score             [ %d ]", score); break;
+        case 7: swprintf_s(buf, _countof(buf), L"Spawn Boss        [ %s ]", bossSpawned ? L"ALIVE" : L"GO"); break;
+        case 8: swprintf_s(buf, _countof(buf), L"Return to Game"); break;
+        }
+        r.drawTextLeft(buf, col1, y, WINDOW_WIDTH - col1 * 2 - (isAction ? 0 : btnW * 2 + btnGap + 8*sc), rowH, ff, 11 * sc, FontStyleBold, i < 8 ? rowCol : Color(255, 255, 180, 100));
+
+        // 绘制操作按钮
+        if (isAdjust) {
+            // [-] 按钮
+            float bx1 = btnRowRight - btnW * 2 - btnGap;
+            r.fillRect(bx1, y + btnYOff, btnW, btnH, Color(220, 180, 60, 40));
+            r.drawRect(bx1, y + btnYOff, btnW, btnH, Color(255, 255, 120, 80), 1.5f);
+            r.drawTextCentered(L"\x2212", bx1, y + btnYOff, btnW, btnH, L"Arial", 12 * sc, FontStyleBold, Color(255, 255, 180, 140));
+
+            // [+] 按钮
+            float bx2 = btnRowRight - btnW;
+            r.fillRect(bx2, y + btnYOff, btnW, btnH, Color(220, 60, 160, 60));
+            r.drawRect(bx2, y + btnYOff, btnW, btnH, Color(255, 120, 255, 120), 1.5f);
+            r.drawTextCentered(L"+", bx2, y + btnYOff, btnW, btnH, L"Arial", 13 * sc, FontStyleBold, Color(255, 200, 255, 180));
+        } else if (isToggle) {
+            // [OFF] 按钮
+            bool on = (i == 1) ? godMode : oneHitKill;
+            float bx1 = btnRowRight - btnW * 2 - btnGap;
+            r.fillRect(bx1, y + btnYOff, btnW, btnH, on ? Color(100, 80, 80, 80) : Color(220, 180, 60, 40));
+            r.drawRect(bx1, y + btnYOff, btnW, btnH, on ? Color(150, 120, 120, 120) : Color(255, 255, 120, 80), 1.5f);
+            r.drawTextCentered(L"OFF", bx1, y + btnYOff, btnW, btnH, L"Arial", 9 * sc, FontStyleBold, on ? Color(150, 120, 120, 120) : Color(255, 200, 160, 120));
+
+            // [ON] 按钮
+            float bx2 = btnRowRight - btnW;
+            r.fillRect(bx2, y + btnYOff, btnW, btnH, on ? Color(220, 60, 160, 60) : Color(100, 80, 80, 80));
+            r.drawRect(bx2, y + btnYOff, btnW, btnH, on ? Color(255, 120, 255, 120) : Color(150, 120, 120, 120), 1.5f);
+            r.drawTextCentered(L"ON", bx2, y + btnYOff, btnW, btnH, L"Arial", 10 * sc, FontStyleBold, on ? Color(255, 220, 255, 200) : Color(150, 120, 120, 120));
+        } else if (isAction) {
+            // 动作按钮：整行右侧一个按钮
+            float bx = btnRowRight - btnW * 2;
+            Color actBg = (i == 8) ? Color(220, 60, 60, 80) : Color(220, 160, 120, 40);
+            Color actBorder = (i == 8) ? Color(255, 150, 150, 150) : Color(255, 220, 180, 80);
+            Color actText = (i == 8) ? Color(255, 220, 200, 180) : Color(255, 255, 200, 140);
+            r.fillRect(bx, y + btnYOff, btnW * 2 + btnGap, btnH, actBg);
+            r.drawRect(bx, y + btnYOff, btnW * 2 + btnGap, btnH, actBorder, 1.5f);
+            const wchar_t* actLabel = (i == 7) ? L"SPAWN" : L"BACK";
+            r.drawTextCentered(actLabel, bx, y + btnYOff, btnW * 2 + btnGap, btnH, L"Arial", 10 * sc, FontStyleBold, actText);
+        }
+    }
+
+    // 底部状态栏
+    float statusY = startY + CHEAT_OPTIONS * rowH + 10 * sc;
+    wchar_t status[256];
+    swprintf_s(status, _countof(status), L"Level:%d | HP:%d | Bombs:%d | Fire:Lv.%d | Score:%d | God:%s | 1HIT:%s",
+               currentLevel, player ? player->lives : 0, player ? player->bombCount : 0,
+               player ? player->firepowerLevel : 1, score,
+               godMode ? L"ON" : L"OFF", oneHitKill ? L"ON" : L"OFF");
+    r.drawTextCentered(status, 0, statusY, (float)WINDOW_WIDTH, 18 * sc, ff, 9 * sc, FontStyleRegular, Color(255, 140, 140, 140));
 }
 
 // ========== 各实体渲染委托 ==========
